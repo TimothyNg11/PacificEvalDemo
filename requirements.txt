@@ -1,0 +1,10 @@
+chromadb>=0.4.0
+sentence-transformers>=2.2.0
+rank-bm25>=0.2.2
+openai>=1.0.0
+pyyaml>=6.0
+matplotlib>=3.7.0
+click>=8.0
+tiktoken>=0.5.0
+numpy>=1.24.0
+pytest>=7.0

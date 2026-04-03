@@ -1,0 +1,374 @@
+# Evaluation Set for RAG Benchmark
+# 25 questions across 5 categories, 5 per category
+# All questions reference the Meridian Technologies corpus
+
+# =============================================================================
+# CATEGORY 1: single_doc_factual (5 questions)
+# Answer is clearly in one document. Easy baseline.
+# =============================================================================
+
+- id: sf_001
+  question: "What deployment strategy does Meridian Technologies use for customer-facing services?"
+  gold_answer: "Meridian Technologies uses a blue-green deployment strategy for all customer-facing services. The process involves building a Docker image, deploying to the inactive environment, running smoke tests, switching the load balancer, and monitoring error rates for 15 minutes with automatic rollback if error rates exceed 0.5%."
+  gold_source_ids:
+    - "engineering/deployment_guide.md"
+  key_facts:
+    - "blue-green"
+    - "15 minutes"
+    - "0.5%"
+  category: single_doc_factual
+  difficulty: easy
+
+- id: sf_002
+  question: "What is the minimum code coverage requirement for unit tests at Meridian?"
+  gold_answer: "All repositories at Meridian Technologies must maintain a minimum of 92% code coverage for unit tests. Coverage drops below 92% block the PR from merging. The payment-service has a stricter requirement of 95% minimum coverage."
+  gold_source_ids:
+    - "engineering/ci_cd_pipeline.md"
+  key_facts:
+    - "92%"
+    - "payment-service"
+    - "95%"
+  category: single_doc_factual
+  difficulty: easy
+
+- id: sf_003
+  question: "What are the core values of Meridian Technologies?"
+  gold_answer: "Meridian Technologies has five core values: Customer Obsession (every decision starts with the customer), Bias for Action (move fast, iterate, ship), Radical Transparency (default to sharing information), Continuous Learning (invest in growth), and One Team (no silos, no politics, we win together)."
+  gold_source_ids:
+    - "hr/onboarding_handbook.md"
+  key_facts:
+    - "Customer Obsession"
+    - "Bias for Action"
+    - "Radical Transparency"
+    - "Continuous Learning"
+    - "One Team"
+  category: single_doc_factual
+  difficulty: easy
+
+- id: sf_004
+  question: "What is the current NPS score for Meridian's product and how has it changed over time?"
+  gold_answer: "Meridian's Q3 2024 NPS is 47, up from 42 in Q2 2024 and 38 in Q1 2024. By segment, Enterprise NPS is 52, Mid-Market is 45, and SMB is 38. The improvement is driven by increased satisfaction with search relevance following the hybrid search launch."
+  gold_source_ids:
+    - "product/customer_feedback_summary.md"
+  key_facts:
+    - "47"
+    - "42"
+    - "38"
+    - "hybrid search"
+  category: single_doc_factual
+  difficulty: easy
+
+- id: sf_005
+  question: "What is the parental leave policy at Meridian Technologies?"
+  gold_answer: "Meridian Technologies offers 16 weeks of paid parental leave for all new parents, including birth, adoption, and foster placement."
+  gold_source_ids:
+    - "hr/compensation_philosophy.md"
+  key_facts:
+    - "16 weeks"
+    - "adoption"
+    - "foster"
+  category: single_doc_factual
+  difficulty: easy
+
+# =============================================================================
+# CATEGORY 2: numerical_precision (5 questions)
+# Answer requires retrieving a specific number. Tests chunking precision.
+# =============================================================================
+
+- id: np_001
+  question: "What was Meridian's Q3 2024 total revenue and year-over-year growth rate?"
+  gold_answer: "Meridian's Q3 2024 total revenue was $42.3 million, representing 28% year-over-year growth. This exceeded their guidance of $39-41 million."
+  gold_source_ids:
+    - "finance/q3_earnings_report.md"
+  distractors:
+    - "finance/q2_earnings_report.md"
+  key_facts:
+    - "42.3"
+    - "28%"
+  category: numerical_precision
+  difficulty: medium
+
+- id: np_002
+  question: "How many active user accounts does the Meridian platform have?"
+  gold_answer: "The User Service maintains approximately 847,000 active user accounts as of Q3 2024."
+  gold_source_ids:
+    - "engineering/architecture_overview.md"
+  key_facts:
+    - "847,000"
+  category: numerical_precision
+  difficulty: medium
+
+- id: np_003
+  question: "What is the total 2024 budget for engineering and how much is allocated to cloud infrastructure?"
+  gold_answer: "The engineering department budget for 2024 is $52.3 million, which is 40.7% of the total company budget. Cloud infrastructure (AWS) is allocated $8.2 million of that total."
+  gold_source_ids:
+    - "finance/annual_budget_2024.md"
+  key_facts:
+    - "52.3"
+    - "40.7%"
+    - "8.2"
+  category: numerical_precision
+  difficulty: medium
+
+- id: np_004
+  question: "What is the fair market value per share according to the latest 409A valuation?"
+  gold_answer: "The fair market value per share is $14.20 according to the last 409A valuation as of July 2024."
+  gold_source_ids:
+    - "hr/compensation_philosophy.md"
+  key_facts:
+    - "14.20"
+    - "July 2024"
+  category: numerical_precision
+  difficulty: medium
+
+- id: np_005
+  question: "What is the current enterprise pipeline value and how many active deals are there?"
+  gold_answer: "The enterprise sales pipeline stands at $12.8 million in qualified opportunities across 47 active deals as of September 30, 2024. This represents a 25% increase from the Q2 pipeline of $10.2 million."
+  gold_source_ids:
+    - "sales/q3_pipeline_review.md"
+  key_facts:
+    - "12.8"
+    - "47"
+    - "25%"
+    - "10.2"
+  category: numerical_precision
+  difficulty: medium
+
+# =============================================================================
+# CATEGORY 3: cross_doc_synthesis (5 questions)
+# Answer requires info from 2-3 different documents.
+# =============================================================================
+
+- id: cs_001
+  question: "How did the September search outage affect both the engineering team and the sales pipeline?"
+  gold_answer: "The September 14 search outage lasted 47 minutes and affected 12,400 users. The root cause was a database migration scheduled at 2 PM instead of 2 AM. On the sales side, the outage directly impacted the Pinnacle Solutions deal ($340,000 ARR), which was delayed by two weeks because it occurred during a live product demo. The sales team expects to close this deal in early Q4. The finance team noted this impact on the enterprise pipeline in the Q3 earnings report."
+  gold_source_ids:
+    - "engineering/incident_postmortem_q3.md"
+    - "sales/q3_pipeline_review.md"
+    - "finance/q3_earnings_report.md"
+  key_facts:
+    - "47 minutes"
+    - "12,400"
+    - "Pinnacle Solutions"
+    - "340,000"
+    - "two weeks"
+  category: cross_doc_synthesis
+  difficulty: hard
+
+- id: cs_002
+  question: "How does the engineering hiring plan connect to the product roadmap priorities?"
+  gold_answer: "The 2025 hiring plan calls for 32 new engineering hires to reach 210 total. Of these, 4 ML engineers and 4 backend engineers are specifically allocated to support the AI Features team for document summaries and smart search — features on the H2 2024/Q1 2025 product roadmap. Another 4 backend engineers are planned for the Platform team to build API v3 and multi-region support, also on the roadmap. 6 frontend engineers are planned for the Advanced Analytics Dashboard, which is a P0 roadmap priority."
+  gold_source_ids:
+    - "hr/hiring_plan_2025.md"
+    - "product/roadmap_h2.md"
+  key_facts:
+    - "32"
+    - "210"
+    - "4 ML engineers"
+    - "API v3"
+    - "Advanced Analytics"
+  category: cross_doc_synthesis
+  difficulty: hard
+
+- id: cs_003
+  question: "What evidence is there that hybrid search has been successful across product, customer, and competitive perspectives?"
+  gold_answer: "From the product perspective, the launch retrospective shows hybrid search achieved a 31% improvement in recall over vector-only, exceeding the 25% target. 62% of search API calls now use hybrid mode. From the customer perspective, the NPS increased from 42 to 47 after the hybrid search launch, with search relevance cited as the top satisfaction driver. From the competitive perspective, Meridian achieves 82% recall vs DocuVerse's 64% with vector-only, and the NovaTech case study shows a customer switching from DocuVerse specifically because of hybrid search with reranking."
+  gold_source_ids:
+    - "product/launch_retrospective.md"
+    - "product/customer_feedback_summary.md"
+    - "product/competitive_analysis.md"
+    - "sales/customer_case_studies.md"
+  key_facts:
+    - "31%"
+    - "62%"
+    - "82%"
+    - "64%"
+    - "NovaTech"
+  category: cross_doc_synthesis
+  difficulty: hard
+
+- id: cs_004
+  question: "What is the full picture of Meridian's planned European expansion across sales, product, and HR?"
+  gold_answer: "Sales & Marketing is building a European team with 3 AEs, 2 SDRs, and 1 Sales Manager as part of the 2024 budget. The hiring plan includes 2 enterprise AEs for Europe and a People Partner to support the European team. On the product side, Multi-Region Data Residency is a P0 priority for Q4 2024, required for GDPR compliance. The London office buildout costs $1.4 million in CapEx. European revenue grew 35% YoY in Q3, and the investor update targets Europe representing 25% of revenue by end of 2025."
+  gold_source_ids:
+    - "finance/annual_budget_2024.md"
+    - "hr/hiring_plan_2025.md"
+    - "product/roadmap_h2.md"
+    - "finance/investor_update_oct.md"
+  key_facts:
+    - "35%"
+    - "25%"
+    - "GDPR"
+    - "1.4"
+    - "London"
+  category: cross_doc_synthesis
+  difficulty: hard
+
+- id: cs_005
+  question: "What is Meridian's path to profitability and what are the key milestones?"
+  gold_answer: "Meridian's operating margin improved from -14.6% in Q1 to -12.1% in Q2 to -8.3% in Q3 2024. The company targets operating cash flow breakeven by Q2 2025 and GAAP profitability by Q4 2025. This will be achieved by slowing headcount growth from 27% in 2024 to 15% in 2025. Cash and equivalents stand at $89.4 million with approximately 24 months of runway. The 2024 budget plans for a $15 million operating loss against $158 million projected revenue, and a 5-8% price increase is planned for January 2025."
+  gold_source_ids:
+    - "finance/investor_update_oct.md"
+    - "finance/q3_earnings_report.md"
+    - "finance/annual_budget_2024.md"
+    - "sales/pricing_strategy.md"
+  key_facts:
+    - "-8.3%"
+    - "Q2 2025"
+    - "Q4 2025"
+    - "89.4"
+    - "5-8%"
+  category: cross_doc_synthesis
+  difficulty: hard
+
+# =============================================================================
+# CATEGORY 4: terminology_mismatch (5 questions)
+# Question uses different vocabulary than the source document.
+# BM25 should struggle; vector search should succeed.
+# =============================================================================
+
+- id: tm_001
+  question: "What is Meridian's employee turnover rate and what are people's reasons for leaving?"
+  gold_answer: "Meridian's voluntary attrition rate is 11.2% annualized, below the industry average of 15.8%. By department: Engineering 9.8%, Sales 16.4%, Product 7.2%, HR 5.0%, G&A 8.1%. The top reasons for voluntary departure are: better compensation elsewhere (34%), career growth opportunities (28%), manager relationship (15%), work-life balance (13%), and other (10%)."
+  gold_source_ids:
+    - "hr/compensation_philosophy.md"
+  key_facts:
+    - "11.2%"
+    - "15.8%"
+    - "34%"
+    - "career growth"
+  category: terminology_mismatch
+  difficulty: medium
+
+- id: tm_002
+  question: "How much money does Meridian spend on its workers' pay and what are the salary ranges?"
+  gold_answer: "Engineering compensation and benefits total $38.6 million in the 2024 budget. Base salary pay bands range from $110,000-$140,000 for junior engineers (L3) up to $320,000-$420,000 for Director+ (L8). The company targets the 65th percentile of market rates. Additionally, all employees receive equity grants with a 4-year vesting schedule and 1-year cliff."
+  gold_source_ids:
+    - "hr/compensation_philosophy.md"
+    - "finance/annual_budget_2024.md"
+  key_facts:
+    - "38.6"
+    - "65th percentile"
+    - "110,000"
+    - "4-year"
+  category: terminology_mismatch
+  difficulty: medium
+
+- id: tm_003
+  question: "When Meridian's website went down in September, how long were customers unable to use it and what went wrong?"
+  gold_answer: "The Search Service experienced a complete outage on September 14, 2024, lasting 47 minutes. The root cause was a human error in scheduling a database maintenance script — the cron expression was set to 2 PM instead of 2 AM, causing an index rebuild during peak hours. The dropped index caused all queries to fall back to sequential scan, overwhelming the database. 12,400 active users were affected and the estimated revenue impact was $185,000."
+  gold_source_ids:
+    - "engineering/incident_postmortem_q3.md"
+  key_facts:
+    - "47 minutes"
+    - "September 14"
+    - "cron"
+    - "185,000"
+    - "12,400"
+  category: terminology_mismatch
+  difficulty: medium
+
+- id: tm_004
+  question: "What is Meridian's telecommuting policy and what stipends do off-site employees receive for their workspace?"
+  gold_answer: "Meridian operates as a hybrid-first organization. Employees within commuting distance must be in-office minimum 2 days per week (Tuesday and Thursday). Fully remote employees get a one-time $1,500 home office setup stipend, $75/month internet reimbursement, and can expense up to $300/month for co-working spaces. They must visit the office quarterly with up to $2,500 per trip covered by the company."
+  gold_source_ids:
+    - "hr/remote_work_policy.md"
+  key_facts:
+    - "2 days per week"
+    - "1,500"
+    - "75"
+    - "300"
+    - "2,500"
+  category: terminology_mismatch
+  difficulty: medium
+
+- id: tm_005
+  question: "How much wiggle room do account managers have when negotiating contract pricing, and what is the chain of command for approving concessions?"
+  gold_answer: "Account Executives can approve volume discounts up to 20% (for 1,000+ users). Sales Managers approve multi-year discounts up to 10%. VP Sales approves competitive displacement discounts up to 20% and multi-year 3-year discounts up to 15%. The CRO approves strategic/logo deals up to 25%. Maximum stackable discount is 30% requiring CRO approval. The floor price for Professional tier is $32/user/month and Enterprise tier is $52/user/month."
+  gold_source_ids:
+    - "sales/pricing_strategy.md"
+  key_facts:
+    - "30%"
+    - "CRO"
+    - "32"
+    - "52"
+  category: terminology_mismatch
+  difficulty: medium
+
+# =============================================================================
+# CATEGORY 5: distractor_heavy (5 questions)
+# Multiple docs contain similar language but only one has the correct answer.
+# =============================================================================
+
+- id: dh_001
+  question: "What was Meridian's enterprise revenue in Q3 2024 specifically, not Q2?"
+  gold_answer: "In Q3 2024, Meridian's enterprise revenue was $28.7 million, representing 68% of total revenue and 34% year-over-year growth."
+  gold_source_ids:
+    - "finance/q3_earnings_report.md"
+  distractors:
+    - "finance/q2_earnings_report.md"
+  key_facts:
+    - "28.7"
+    - "68%"
+    - "34%"
+  category: distractor_heavy
+  difficulty: medium
+
+- id: dh_002
+  question: "What is the ARR as of Q3 2024, not Q2 2024?"
+  gold_answer: "Meridian's Annual Recurring Revenue (ARR) as of Q3 2024 was $171.6 million, up from $134.2 million in Q3 2023."
+  gold_source_ids:
+    - "finance/q3_earnings_report.md"
+  distractors:
+    - "finance/q2_earnings_report.md"
+  key_facts:
+    - "171.6"
+    - "134.2"
+  category: distractor_heavy
+  difficulty: medium
+
+- id: dh_003
+  question: "What features were actually shipped in Q3 2024 versus what was planned on the roadmap?"
+  gold_answer: "According to the launch retrospective, three features were shipped in Q3 2024: Hybrid Search (delivered 2 weeks ahead of schedule with 31% recall improvement, exceeding the 25% target), SSO/SAML Integration (delivered 1 week late with 34 enterprise customers configured), and Audit Logging (delivered on time with 47% enterprise adoption). The roadmap had planned Hybrid Search for Q3, SSO for Q3, and Audit Logging for Q3, so all three shipped as planned."
+  gold_source_ids:
+    - "product/launch_retrospective.md"
+  distractors:
+    - "product/roadmap_h2.md"
+  key_facts:
+    - "Hybrid Search"
+    - "SSO"
+    - "Audit Logging"
+    - "31%"
+    - "2 weeks ahead"
+  category: distractor_heavy
+  difficulty: hard
+
+- id: dh_004
+  question: "What was Meridian's operating margin in Q3 2024, not Q2 2024?"
+  gold_answer: "Meridian's operating margin in Q3 2024 was -8.3%, an improvement from -12.1% in Q2 2024."
+  gold_source_ids:
+    - "finance/q3_earnings_report.md"
+  distractors:
+    - "finance/q2_earnings_report.md"
+    - "finance/investor_update_oct.md"
+  key_facts:
+    - "-8.3%"
+    - "-12.1%"
+  category: distractor_heavy
+  difficulty: medium
+
+- id: dh_005
+  question: "How does the pricing in the enterprise playbook compare to the pricing strategy document? Are there any differences?"
+  gold_answer: "The pricing is consistent across both documents. Both list Standard at $25/user/month, Professional at $45/user/month, and Enterprise at $75/user/month. Both documents include the same volume discounts (10% for 100-499 users, 15% for 500-999, 20% for 1,000+) and multi-year discount of 10%. The pricing strategy document provides additional detail including floor prices (Professional: $32/user/month, Enterprise: $52/user/month), competitive pricing comparison, and a planned 5-8% price increase for January 2025 that is not mentioned in the playbook."
+  gold_source_ids:
+    - "sales/pricing_strategy.md"
+    - "sales/enterprise_playbook.md"
+  key_facts:
+    - "25"
+    - "45"
+    - "75"
+    - "32"
+    - "52"
+    - "5-8%"
+  category: cross_doc_synthesis
+  difficulty: hard
