@@ -7,13 +7,13 @@ A benchmarking framework that evaluates how different retrieval strategies affec
 When building a RAG pipeline, which retrieval strategy should you use? The answer depends on the type of question being asked. This benchmark systematically evaluates **48 retrieval configurations** (4 chunking strategies × 4 search strategies × 3 top-k values) across 25 carefully designed questions to find out which strategies work best — and where they fail.
 
 ## Key Findings
+Disclaimer: Results vary based on dataset; synthetic dataset was generated for purposes of project but findings may differ with real data.
 
-*Run the benchmark to populate this section with your own results. Example findings:*
-
-- Hybrid search + reranking consistently outperforms pure vector search on multi-document questions, at an additional latency cost
-- BM25 fails on terminology mismatch questions where the query uses different vocabulary than the source documents
-- Answer quality plateaus after a certain context token threshold — retrieving more adds cost without improving answers
-- Semantic chunking outperforms fixed-size chunking on questions requiring numerical precision
+- **More expensive strategies yield diminishing returns**: hybrid_rerank is the best search strategy (0.793 avg similarity) but only 1.3% better than plain hybrid at a cost of 785ms extra latency; similarly, k=10 uses 3.3x more tokens than k=3 for only a +0.047 similarity gain
+- **Larger chunks and higher k inflate cost without proportional quality gains**: `fixed_512` averages 2,836 context tokens and 3,248ms latency — nearly 6x the tokens and 2x the latency of `paragraph` — for only a +0.048 similarity improvement
+- **Answer quality has diminishing returns after ~1,200 context tokens** — beyond ~3,000 tokens there is no meaningful gain, suggesting retrieval precision matters far more than retrieval volume
+- **Efficient configs rival the top performers**: `paragraph__vector__k10` (0.794 similarity, 868 tokens, 1,710ms) and `semantic__hybrid_rerank__k5` (0.794 similarity, 620 tokens, 2,893ms) approach the best score of 0.825 at a fraction of the cost
+- **Wrong-source retrieval is the dominant failure mode** across all configurations — improving retrieval precision is the highest-leverage path to better answers
 
 ## Results
 
@@ -115,7 +115,7 @@ Picks one random question, then tests it against 5 diverse retrieval configurati
 python scripts/run_quick.py              # 5 random configs, 1 random question
 python scripts/run_quick.py -n 10        # more configs
 python scripts/run_quick.py -n 5 -s 42   # reproducible with a seed
-python scripts/generate_report.py
+python scripts/generate_report.py        # generate results
 ```
 
 ### Full Benchmark (1,200 evaluations)
@@ -165,6 +165,7 @@ python scripts/clean_results.py
 
 ## Next Steps
 
-- **Query-dependent strategy selection** — Route simple factual questions to fast strategies (BM25, low top-k) and complex synthesis questions to thorough ones (hybrid+rerank, high top-k)
-- **Benchmark across multiple LLMs** — Test if retrieval strategy matters more than model choice by comparing llama3.2:3b vs. larger models
-- **Adaptive chunking** — Use document structure (headers, lists, tables) to create semantically meaningful chunks rather than fixed-size windows
+- **Reduce wrong-source retrieval** — Wrong-source is the dominant failure mode (~40–50% of results); adding metadata filtering, source-aware reranking, or query decomposition could improve precision
+- **Query-dependent strategy routing** — Route terminology-mismatch and cross-doc questions to hybrid+rerank (where BM25 fails hardest) and simple factual/numerical questions to cheaper strategies like paragraph+vector
+- **Optimize context budget** — Quality has diminishing returns around 1,200 tokens; capping context size or using smarter truncation could cut latency and cost without sacrificing answer quality
+- **Benchmark across multiple LLMs** — Test whether a stronger generator model closes the gap between cheap retrieval configs and expensive ones, since ~50% of results are partial answers even with good retrieval
