@@ -3,4 +3,7 @@ __pycache__/
 .pytest_cache/
 results/
 data/chroma_indexes/
+data/raptor_cache/
+data/corpus_qasper/
+data/eval_set_qasper.yaml
 .env

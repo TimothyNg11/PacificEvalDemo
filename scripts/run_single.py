@@ -14,7 +14,7 @@ from src.config import (
 )
 from src.indexer import IndexBuilder
 from src.generator import AnswerGenerator
-from src.retrievers import Retriever, get_reranker
+from src.retrievers import get_reranker, make_retriever
 from src.scorers import RetrievalScorer, GoldSimilarityScorer, KeyFactScorer
 
 
@@ -67,16 +67,23 @@ def main(config_name, question_id, llm):
     print(f"Difficulty: {question['difficulty']}")
     print(f"Gold sources: {question['gold_source_ids']}")
 
-    # Build index
+    # Build index (build RAPTOR tree too if a RAPTOR config was requested)
     print("\nBuilding index...")
     builder = IndexBuilder()
-    indexes = builder.build_all_indexes(CORPUS_DIR)
+    indexes = builder.build_all_indexes(CORPUS_DIR, include_raptor=config.is_raptor)
+    if config.chunking.value not in indexes:
+        click.echo(
+            f"Error: no index for chunking strategy {config.chunking.value!r} "
+            f"(available: {list(indexes.keys())}).",
+            err=True,
+        )
+        sys.exit(1)
     index = indexes[config.chunking.value]
 
     # Retrieve
     print("\nRetrieving...")
     reranker = get_reranker()
-    retriever = Retriever(index, reranker=reranker)
+    retriever = make_retriever(index, reranker=reranker)
     retrieval_result = retriever.retrieve(
         query=question["question"],
         strategy=config.search,

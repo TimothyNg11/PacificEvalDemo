@@ -40,6 +40,11 @@ def chunk_fixed_256(text: str, source_file: str) -> list[Chunk]:
     return _chunk_fixed(text, source_file, window=256, overlap=50, strategy="fixed_256")
 
 
+def chunk_raptor_100(text: str, source_file: str) -> list[Chunk]:
+    """Split text into 100-token windows, no overlap (RAPTOR leaf chunking)."""
+    return _chunk_fixed(text, source_file, window=100, overlap=0, strategy="raptor_100")
+
+
 def chunk_fixed_512(text: str, source_file: str) -> list[Chunk]:
     """Split text into 512-token windows with 100-token overlap."""
     return _chunk_fixed(text, source_file, window=512, overlap=100, strategy="fixed_512")
@@ -179,6 +184,7 @@ _CHUNKER_MAP = {
     ChunkingStrategy.FIXED_512: chunk_fixed_512,
     ChunkingStrategy.SEMANTIC: chunk_semantic,
     ChunkingStrategy.PARAGRAPH: chunk_paragraph,
+    ChunkingStrategy.RAPTOR_100: chunk_raptor_100,
 }
 
 

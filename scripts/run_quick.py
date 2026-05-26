@@ -17,11 +17,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from src.config import (
     RetrievalConfig, ChunkingStrategy, SearchStrategy,
     LLMConfig, LLM_PRESETS,
+    _RAPTOR_CHUNKINGS, _RAPTOR_SEARCHES,
 )
 from src.runner import BenchmarkRunner
 
-ALL_CHUNKING = list(ChunkingStrategy)
-ALL_SEARCH = list(SearchStrategy)
+# Baseline-only by default — sampling across the full enum (now including
+# RAPTOR) could produce invalid combos or require an expensive tree build
+# that the quick script isn't meant to trigger.
+ALL_CHUNKING = [c for c in ChunkingStrategy if c not in _RAPTOR_CHUNKINGS]
+ALL_SEARCH = [s for s in SearchStrategy if s not in _RAPTOR_SEARCHES]
 ALL_TOP_K = [3, 5, 10]
 NUM_CONFIGS = 5
 

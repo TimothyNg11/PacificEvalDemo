@@ -24,6 +24,17 @@ class KeyFactMetrics:
     missing_facts: list[str] = field(default_factory=list)
 
 
+def _chunk_sources(chunk: Chunk) -> set[str]:
+    """Return the set of source files a chunk covers.
+
+    Most chunks have a single source. RAPTOR summary nodes join their
+    constituent sources with `;` (see `RaptorNode.to_chunk`).
+    """
+    if ";" in chunk.source_file:
+        return {s for s in chunk.source_file.split(";") if s}
+    return {chunk.source_file}
+
+
 class RetrievalScorer:
     """Scores retrieval quality by comparing retrieved chunks to gold source files."""
 
@@ -43,14 +54,17 @@ class RetrievalScorer:
         total = len(retrieved_chunks)
         gold_set = set(gold_source_ids)
 
-        # Context precision: fraction of retrieved chunks from gold sources
+        # Context precision: fraction of retrieved chunks whose source set
+        # intersects the gold set.
         relevant_count = sum(
-            1 for c in retrieved_chunks if c.source_file in gold_set
+            1 for c in retrieved_chunks if _chunk_sources(c) & gold_set
         )
         context_precision = relevant_count / total
 
-        # Context recall: fraction of gold sources with at least one chunk retrieved
-        retrieved_sources = set(c.source_file for c in retrieved_chunks)
+        # Context recall: fraction of gold sources covered by some retrieved chunk.
+        retrieved_sources: set[str] = set()
+        for c in retrieved_chunks:
+            retrieved_sources.update(_chunk_sources(c))
         covered = sum(1 for g in gold_source_ids if g in retrieved_sources)
         context_recall = covered / len(gold_source_ids) if gold_source_ids else 0.0
 
@@ -59,7 +73,7 @@ class RetrievalScorer:
         if distractor_ids:
             distractor_set = set(distractor_ids)
             distractor_count = sum(
-                1 for c in retrieved_chunks if c.source_file in distractor_set
+                1 for c in retrieved_chunks if _chunk_sources(c) & distractor_set
             )
             distractor_rate = distractor_count / total
 

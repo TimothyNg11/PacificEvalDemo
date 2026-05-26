@@ -105,11 +105,21 @@ def test_hybrid_rerank_changes_order():
 
 
 def test_top_k_respected():
-    """Verify top_k is respected — never return more than top_k."""
+    """Verify top_k is respected — never return more than top_k.
+
+    Only checks the baseline `Retriever` strategies; RAPTOR strategies are
+    covered by tests/test_raptor.py against `RaptorRetriever`.
+    """
     index = _build_test_index()
     retriever = Retriever(index)
 
-    for strategy in SearchStrategy:
+    baseline_strategies = [
+        SearchStrategy.VECTOR,
+        SearchStrategy.BM25,
+        SearchStrategy.HYBRID,
+        SearchStrategy.HYBRID_RERANK,
+    ]
+    for strategy in baseline_strategies:
         for top_k in [1, 2, 3]:
             result = retriever.retrieve("programming language", strategy, top_k=top_k)
             assert len(result.chunks) <= top_k, (

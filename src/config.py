@@ -11,6 +11,7 @@ class ChunkingStrategy(Enum):
     FIXED_512 = "fixed_512"
     SEMANTIC = "semantic"
     PARAGRAPH = "paragraph"
+    RAPTOR_100 = "raptor_100"
 
 
 class SearchStrategy(Enum):
@@ -18,6 +19,18 @@ class SearchStrategy(Enum):
     BM25 = "bm25"
     HYBRID = "hybrid"
     HYBRID_RERANK = "hybrid_rerank"
+    RAPTOR_TREE = "raptor_tree"
+    RAPTOR_COLLAPSED = "raptor_collapsed"
+    RAPTOR_QCOND = "raptor_qcond"
+
+
+# RAPTOR-only members
+_RAPTOR_CHUNKINGS = {ChunkingStrategy.RAPTOR_100}
+_RAPTOR_SEARCHES = {
+    SearchStrategy.RAPTOR_TREE,
+    SearchStrategy.RAPTOR_COLLAPSED,
+    SearchStrategy.RAPTOR_QCOND,
+}
 
 
 @dataclass
@@ -30,13 +43,34 @@ class RetrievalConfig:
     def name(self) -> str:
         return f"{self.chunking.value}__{self.search.value}__k{self.top_k}"
 
+    @property
+    def is_raptor(self) -> bool:
+        return self.chunking in _RAPTOR_CHUNKINGS or self.search in _RAPTOR_SEARCHES
 
-def generate_all_configs() -> list[RetrievalConfig]:
-    """Generate all 48 config combinations: 4 chunking × 4 search × 3 top_k."""
+
+def _config_is_valid(chunking: ChunkingStrategy, search: SearchStrategy) -> bool:
+    """RAPTOR search strategies only pair with RAPTOR chunking, and vice versa."""
+    chunk_is_raptor = chunking in _RAPTOR_CHUNKINGS
+    search_is_raptor = search in _RAPTOR_SEARCHES
+    return chunk_is_raptor == search_is_raptor
+
+
+def generate_all_configs(include_raptor: bool = False) -> list[RetrievalConfig]:
+    """Generate all valid config combinations.
+
+    - Baseline (48 configs): 4 chunking × 4 search × 3 top_k.
+    - With RAPTOR (57 configs): adds 1 chunking × 3 search × 3 top_k = 9 more.
+    """
     configs = []
     for chunking, search, top_k in product(
         ChunkingStrategy, SearchStrategy, [3, 5, 10]
     ):
+        if not _config_is_valid(chunking, search):
+            continue
+        if not include_raptor and (
+            chunking in _RAPTOR_CHUNKINGS or search in _RAPTOR_SEARCHES
+        ):
+            continue
         configs.append(RetrievalConfig(chunking=chunking, search=search, top_k=top_k))
     return configs
 
