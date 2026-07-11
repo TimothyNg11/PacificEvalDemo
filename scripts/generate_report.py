@@ -52,6 +52,26 @@ def main(results_file, output_dir):
         os.path.join(plots_dir, "context_tokens_vs_quality.png")
     )
 
+    print("Generating Pareto frontier (RAPTOR vs baseline)...")
+    analyzer.plot_pareto_frontier(
+        os.path.join(plots_dir, "pareto_frontier.png")
+    )
+
+    print("Generating RAPTOR-vs-baseline by category...")
+    analyzer.plot_raptor_vs_baseline_by_category(
+        os.path.join(plots_dir, "raptor_vs_baseline_by_category.png")
+    )
+
+    print("Generating QASPER F1 by strategy (if applicable)...")
+    analyzer.plot_qasper_f1_by_strategy(
+        os.path.join(plots_dir, "qasper_f1_by_strategy.png")
+    )
+
+    print("Generating faithfulness by strategy (if applicable)...")
+    analyzer.plot_faithfulness_by_strategy(
+        os.path.join(plots_dir, "faithfulness_by_strategy.png")
+    )
+
     # Generate summary CSV
     print("Generating summary table...")
     analyzer.generate_summary_table()

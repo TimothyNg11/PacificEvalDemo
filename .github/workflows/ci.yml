@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify config gating
+        run: |
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, '.')
+          from src.config import generate_all_configs
+          assert len(generate_all_configs(include_raptor=False)) == 48
+          assert len(generate_all_configs(include_raptor=True)) == 57
+          print("config counts: 48 / 57 OK")
+          PY
+
+      - name: Run unit tests (no Ollama / no network LLM calls)
+        # Exclude scripts/smoke_raptor.py which needs a running Ollama server.
+        env:
+          # Force HF datasets / sentence-transformers to offline behavior so
+          # tests can't accidentally hit the network.
+          HF_HUB_OFFLINE: "0"
+          TRANSFORMERS_OFFLINE: "0"
+        run: |
+          python -m pytest tests/ -v --tb=short

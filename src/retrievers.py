@@ -1,4 +1,9 @@
-"""Retrieval strategies: vector, BM25, hybrid, hybrid+rerank."""
+"""Retrieval strategies: vector, BM25, hybrid, hybrid+rerank.
+
+For RAPTOR retrieval (`raptor_tree`, `raptor_collapsed`, `raptor_qcond`) see
+`src/raptor/tree_retriever.py`. Use `make_retriever()` below to construct the
+correct retriever for either a `CorpusIndex` or a `RaptorIndex`.
+"""
 
 import time
 from dataclasses import dataclass, field
@@ -159,3 +164,22 @@ class Retriever:
             if f"{chunk.source_file}_{chunk.chunk_index}" == doc_id:
                 return chunk
         return None
+
+
+def make_retriever(index, reranker=None):
+    """Return the right retriever for the index type.
+
+    - `CorpusIndex` -> `Retriever` (existing 4 strategies). `reranker` is
+      used only by the `hybrid_rerank` strategy here.
+    - `RaptorIndex` -> `RaptorRetriever` (3 RAPTOR strategies). `reranker`
+      is accepted for a uniform call signature but ignored — none of the
+      RAPTOR modes rerank.
+    """
+    # Local import to avoid a circular import (raptor depends on this module
+    # for `RetrievalResult`).
+    from .raptor.tree_index import RaptorIndex
+    from .raptor.tree_retriever import RaptorRetriever
+
+    if isinstance(index, RaptorIndex):
+        return RaptorRetriever(index)
+    return Retriever(index, reranker=reranker)

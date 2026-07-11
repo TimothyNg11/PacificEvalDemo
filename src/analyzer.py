@@ -36,6 +36,9 @@ class BenchmarkAnalyzer:
                 "fact_recall": r.fact_recall,
                 "generated_answer": r.generated_answer,
                 "gold_answer": r.gold_answer,
+                "qasper_f1": getattr(r, "qasper_f1", -1.0),
+                "qasper_em": getattr(r, "qasper_em", -1.0),
+                "faithfulness": getattr(r, "faithfulness", -1.0),
             }
             for r in results
         ]
@@ -56,6 +59,11 @@ class BenchmarkAnalyzer:
         for key in keys:
             values = [r[key] for r in group]
             avgs[f"avg_{key}"] = sum(values) / len(values) if values else 0.0
+        # Optional metrics: only average over rows where they're populated (!= -1).
+        for opt_key in ("qasper_f1", "qasper_em", "faithfulness"):
+            values = [r.get(opt_key, -1.0) for r in group]
+            values = [v for v in values if v is not None and v != -1.0]
+            avgs[f"avg_{opt_key}"] = (sum(values) / len(values)) if values else float("nan")
         return avgs
 
     def generate_summary_table(self) -> dict:
@@ -460,3 +468,189 @@ class BenchmarkAnalyzer:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(report)
+
+    # ---------- RAPTOR / Pareto / ablation plots ----------
+
+    @staticmethod
+    def _is_raptor_search(search: str) -> bool:
+        """Whether a bare search-strategy value (e.g. "raptor_tree",
+        "vector") is a RAPTOR mode. Shared by `_strategy_family` and the
+        per-search-strategy plots below, so there's one place that knows
+        the "raptor_" naming convention."""
+        return search.startswith("raptor_")
+
+    @classmethod
+    def _strategy_family(cls, config_name: str) -> str:
+        """Classify a config as baseline vs RAPTOR mode for plotting."""
+        parts = config_name.split("__")
+        search = parts[1] if len(parts) > 1 else ""
+        if cls._is_raptor_search(search):
+            return search  # raptor_tree / raptor_collapsed / raptor_qcond
+        return "baseline"
+
+    def plot_pareto_frontier(self, output_path: str, metric: str = "gold_similarity"):
+        """Token budget (context_tokens) vs quality, colored by strategy family.
+
+        Highlights RAPTOR modes (tree / collapsed / qcond) against the
+        baseline cloud so the reader can see whether RAPTOR sits on the
+        Pareto frontier at any budget.
+        """
+        groups = self._group_by_config()
+
+        family_colors = {
+            "baseline": "lightgray",
+            "raptor_tree": "#3498db",
+            "raptor_collapsed": "#2ecc71",
+            "raptor_qcond": "#e74c3c",
+        }
+        family_markers = {
+            "baseline": "o",
+            "raptor_tree": "^",
+            "raptor_collapsed": "s",
+            "raptor_qcond": "D",
+        }
+
+        fig, ax = plt.subplots(figsize=(12, 7))
+        points: list[tuple[float, float, str, str]] = []
+        for config_name, group in groups.items():
+            avgs = self._compute_config_averages(group)
+            x = avgs["avg_context_tokens"]
+            y = avgs.get(f"avg_{metric}", avgs["avg_gold_similarity"])
+            family = self._strategy_family(config_name)
+            points.append((x, y, config_name, family))
+            ax.scatter(
+                x, y,
+                c=family_colors.get(family, "gray"),
+                marker=family_markers.get(family, "o"),
+                s=110 if family != "baseline" else 50,
+                alpha=0.85 if family != "baseline" else 0.45,
+                edgecolors="black", linewidth=0.6,
+                zorder=3 if family != "baseline" else 1,
+            )
+
+        # Pareto frontier: max y for each x (ascending x)
+        sorted_pts = sorted(points, key=lambda p: p[0])
+        frontier: list[tuple[float, float, str, str]] = []
+        for x, y, name, family in sorted_pts:
+            if not frontier or y > frontier[-1][1]:
+                frontier.append((x, y, name, family))
+        if frontier:
+            fx = [p[0] for p in frontier]
+            fy = [p[1] for p in frontier]
+            ax.plot(fx, fy, "k--", alpha=0.4, label="Pareto frontier", linewidth=1.0)
+
+        for family, color in family_colors.items():
+            ax.scatter([], [], c=color, marker=family_markers[family],
+                       label=family, s=80, edgecolors="black", linewidth=0.6)
+
+        ax.set_xlabel("Average context tokens")
+        ax.set_ylabel(f"Average {metric}")
+        ax.set_title(f"Pareto frontier: token budget vs {metric}")
+        ax.legend(loc="lower right", fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        fig.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+
+    def plot_raptor_vs_baseline_by_category(self, output_path: str):
+        """For each question category, plot avg gold_similarity for the best
+        baseline config vs each RAPTOR mode. Highlights where RAPTOR helps."""
+        # Find categories present
+        categories = sorted({r["question_category"] for r in self.result_dicts})
+        if not categories:
+            return
+
+        family_scores: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+        for r in self.result_dicts:
+            family = self._strategy_family(r["config_name"])
+            family_scores[family][r["question_category"]].append(r["gold_similarity"])
+
+        families = [f for f in ("baseline", "raptor_tree", "raptor_collapsed", "raptor_qcond")
+                    if f in family_scores]
+        if len(families) <= 1:
+            return  # no RAPTOR data; skip
+
+        fig, ax = plt.subplots(figsize=(max(10, len(categories) * 2.0), 6))
+        x = np.arange(len(categories))
+        width = 0.8 / len(families)
+        colors = {
+            "baseline": "#95a5a6",
+            "raptor_tree": "#3498db",
+            "raptor_collapsed": "#2ecc71",
+            "raptor_qcond": "#e74c3c",
+        }
+        for i, fam in enumerate(families):
+            values = []
+            for cat in categories:
+                scores = family_scores[fam].get(cat, [])
+                values.append(sum(scores) / len(scores) if scores else 0.0)
+            ax.bar(x + i * width, values, width, label=fam, color=colors.get(fam, "gray"), alpha=0.85)
+
+        ax.set_xlabel("Question category")
+        ax.set_ylabel("Avg gold similarity")
+        ax.set_title("RAPTOR vs baseline by question category")
+        ax.set_xticks(x + width * (len(families) - 1) / 2)
+        ax.set_xticklabels([c.replace("_", "\n") for c in categories], fontsize=8)
+        ax.legend()
+        ax.grid(True, alpha=0.3, axis="y")
+
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        fig.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+
+    def plot_qasper_f1_by_strategy(self, output_path: str):
+        """Bar plot of avg QASPER F1 by search strategy. No-op if no F1 data."""
+        rows = [r for r in self.result_dicts if r.get("qasper_f1", -1.0) != -1.0]
+        if not rows:
+            return
+        per_search: dict[str, list[float]] = defaultdict(list)
+        for r in rows:
+            parts = r["config_name"].split("__")
+            search = parts[1] if len(parts) > 1 else "?"
+            per_search[search].append(r["qasper_f1"])
+        labels = sorted(per_search.keys())
+        means = [sum(per_search[l]) / len(per_search[l]) for l in labels]
+
+        fig, ax = plt.subplots(figsize=(10, 5))
+        colors = ["#3498db" if self._is_raptor_search(l) else "#95a5a6" for l in labels]
+        ax.bar(labels, means, color=colors, alpha=0.85)
+        ax.set_ylabel("Avg QASPER F1")
+        ax.set_title("QASPER token-level F1 by search strategy")
+        ax.set_ylim(0, max(means + [1.0]))
+        for i, m in enumerate(means):
+            ax.text(i, m + 0.01, f"{m:.3f}", ha="center", fontsize=8)
+        plt.xticks(rotation=20, ha="right", fontsize=8)
+        ax.grid(True, alpha=0.3, axis="y")
+
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        fig.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+
+    def plot_faithfulness_by_strategy(self, output_path: str):
+        """Bar plot of avg NLI faithfulness by search strategy. No-op if missing."""
+        rows = [r for r in self.result_dicts if r.get("faithfulness", -1.0) != -1.0]
+        if not rows:
+            return
+        per_search: dict[str, list[float]] = defaultdict(list)
+        for r in rows:
+            parts = r["config_name"].split("__")
+            search = parts[1] if len(parts) > 1 else "?"
+            per_search[search].append(r["faithfulness"])
+        labels = sorted(per_search.keys())
+        means = [sum(per_search[l]) / len(per_search[l]) for l in labels]
+
+        fig, ax = plt.subplots(figsize=(10, 5))
+        colors = ["#3498db" if self._is_raptor_search(l) else "#95a5a6" for l in labels]
+        ax.bar(labels, means, color=colors, alpha=0.85)
+        ax.set_ylabel("Avg NLI faithfulness")
+        ax.set_title("Faithfulness (NLI entailment) by search strategy")
+        ax.set_ylim(0, 1.0)
+        for i, m in enumerate(means):
+            ax.text(i, m + 0.01, f"{m:.3f}", ha="center", fontsize=8)
+        plt.xticks(rotation=20, ha="right", fontsize=8)
+        ax.grid(True, alpha=0.3, axis="y")
+
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        fig.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)

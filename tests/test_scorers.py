@@ -67,6 +67,43 @@ def test_retrieval_scorer_empty():
     assert metrics.context_recall == 0.0
 
 
+def test_retrieval_scorer_precision_fractional_for_multi_source_chunk():
+    """A RAPTOR summary chunk spanning many sources gets fractional credit,
+    not full credit, when only some of its sources are gold — a 10-source
+    summary node with 1 gold source should contribute 0.1, not 1.0."""
+    ten_sources = [f"doc{i}.md" for i in range(10)]
+    chunk = Chunk(
+        text="summary", source_file=";".join(ten_sources), chunk_index=0,
+        chunking_strategy="raptor_L1", source_files=ten_sources,
+    )
+    scorer = RetrievalScorer()
+    metrics = scorer.score([chunk], gold_source_ids=["doc0.md"])
+    assert abs(metrics.context_precision - 0.1) < 1e-9
+
+    # Distractor rate gets the same fractional treatment.
+    metrics2 = scorer.score(
+        [chunk], gold_source_ids=[], distractor_ids=["doc0.md", "doc1.md"]
+    )
+    assert abs(metrics2.distractor_rate - 0.2) < 1e-9
+
+
+def test_retrieval_scorer_baseline_chunk_semicolon_filename_is_opaque():
+    """A baseline chunk (source_files unset) must treat source_file as one
+    opaque string, even if the filename itself contains ';' — restores
+    main's semantics for filenames containing ';' rather than parsing them
+    as multiple sources."""
+    chunk = Chunk(
+        text="a", source_file="weird;name.md", chunk_index=0,
+        chunking_strategy="test",
+    )
+    scorer = RetrievalScorer()
+    metrics = scorer.score([chunk], gold_source_ids=["weird;name.md"])
+    assert metrics.context_precision == 1.0
+    # Must NOT match a gold id equal to a ';'-split fragment of the filename.
+    metrics2 = scorer.score([chunk], gold_source_ids=["name.md"])
+    assert metrics2.context_precision == 0.0
+
+
 def test_gold_similarity_identical():
     """Test that identical strings score ~1.0."""
     scorer = GoldSimilarityScorer()
@@ -145,6 +182,8 @@ if __name__ == "__main__":
     test_retrieval_scorer_recall()
     test_retrieval_scorer_distractor_rate()
     test_retrieval_scorer_empty()
+    test_retrieval_scorer_precision_fractional_for_multi_source_chunk()
+    test_retrieval_scorer_baseline_chunk_semicolon_filename_is_opaque()
     test_gold_similarity_identical()
     test_gold_similarity_paraphrase()
     test_gold_similarity_unrelated()

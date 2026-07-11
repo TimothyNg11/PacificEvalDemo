@@ -1,6 +1,7 @@
 """Chunking strategies for splitting documents into retrieval units."""
 
 import os
+import re
 from dataclasses import dataclass
 
 import tiktoken
@@ -16,19 +17,28 @@ class Chunk:
     source_file: str
     chunk_index: int
     chunking_strategy: str
+    # Multi-source provenance (RAPTOR summary nodes cover several original
+    # files). Baseline chunkers leave this None — such chunks have exactly
+    # one opaque source, `source_file`, and it is never parsed for structure.
+    source_files: list[str] | None = None
 
 
 _tokenizer = tiktoken.get_encoding("cl100k_base")
 
-# Lazy-loaded embedding model for semantic chunking
-_semantic_model = None
+# Lazy-loaded, process-wide embedding model singleton.
+_embedding_model = None
 
 
-def _get_semantic_model():
-    global _semantic_model
-    if _semantic_model is None:
-        _semantic_model = SentenceTransformer(EMBEDDING_MODEL)
-    return _semantic_model
+def get_embedding_model() -> SentenceTransformer:
+    """Return the shared `SentenceTransformer(EMBEDDING_MODEL)` instance,
+    constructing it on first use. Used by semantic chunking and by RAPTOR's
+    tree builder/retriever so a benchmark run loading multiple RAPTOR
+    configs doesn't reload the same model weights per config.
+    """
+    global _embedding_model
+    if _embedding_model is None:
+        _embedding_model = SentenceTransformer(EMBEDDING_MODEL)
+    return _embedding_model
 
 
 def _count_tokens(text: str) -> int:
@@ -38,6 +48,11 @@ def _count_tokens(text: str) -> int:
 def chunk_fixed_256(text: str, source_file: str) -> list[Chunk]:
     """Split text into 256-token windows with 50-token overlap."""
     return _chunk_fixed(text, source_file, window=256, overlap=50, strategy="fixed_256")
+
+
+def chunk_raptor_100(text: str, source_file: str) -> list[Chunk]:
+    """Split text into 100-token windows, no overlap (RAPTOR leaf chunking)."""
+    return _chunk_fixed(text, source_file, window=100, overlap=0, strategy="raptor_100")
 
 
 def chunk_fixed_512(text: str, source_file: str) -> list[Chunk]:
@@ -67,17 +82,20 @@ def _chunk_fixed(text: str, source_file: str, window: int, overlap: int, strateg
     return chunks
 
 
-def _split_sentences(text: str) -> list[str]:
-    """Split text into sentences (simple heuristic)."""
-    import re
+def split_sentences(text: str) -> list[str]:
+    """Split text into sentences (simple heuristic).
+
+    Shared by `chunk_semantic` and `FaithfulnessScorer` so there's one
+    sentence-boundary regex in the codebase.
+    """
     sentences = re.split(r'(?<=[.!?])\s+', text)
     return [s.strip() for s in sentences if s.strip()]
 
 
 def chunk_semantic(text: str, source_file: str) -> list[Chunk]:
     """Split text by semantic similarity between consecutive sentences."""
-    model = _get_semantic_model()
-    sentences = _split_sentences(text)
+    model = get_embedding_model()
+    sentences = split_sentences(text)
     if len(sentences) <= 2:
         return [Chunk(
             text=text,
@@ -179,6 +197,7 @@ _CHUNKER_MAP = {
     ChunkingStrategy.FIXED_512: chunk_fixed_512,
     ChunkingStrategy.SEMANTIC: chunk_semantic,
     ChunkingStrategy.PARAGRAPH: chunk_paragraph,
+    ChunkingStrategy.RAPTOR_100: chunk_raptor_100,
 }
 
 

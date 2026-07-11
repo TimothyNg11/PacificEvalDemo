@@ -1,27 +1,35 @@
 """Index building for ChromaDB (vector) and BM25 (keyword) search."""
 
 import os
+from typing import Union
 
 import chromadb
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 
 from .chunkers import Chunk, chunk_corpus
-from .config import ChunkingStrategy, EMBEDDING_MODEL, CHROMA_DIR
+from .config import ChunkingStrategy, EMBEDDING_MODEL, CHROMA_DIR, LLMConfig
 
 
 class CorpusIndex:
-    """Holds both a ChromaDB collection and a BM25 index for a set of chunks."""
+    """Holds both a ChromaDB collection and a BM25 index for a set of chunks.
 
-    def __init__(self, chunks: list[Chunk], config_name: str):
+    `corpus_key` must identify the corpus contents (e.g. a hash). Without it,
+    the persisted collection for one corpus would be silently reused for
+    another corpus sharing the same chunking strategy — vector queries would
+    then return ids that resolve to no chunk, i.e. empty retrievals.
+    """
+
+    def __init__(self, chunks: list[Chunk], config_name: str, corpus_key: str = ""):
         self.chunks = chunks
         self.embedding_model = SentenceTransformer(EMBEDDING_MODEL)
 
-        # Build ChromaDB collection
-        persist_dir = os.path.join(CHROMA_DIR, config_name)
+        # Build ChromaDB collection, namespaced by corpus contents.
+        collection_id = f"{config_name}__{corpus_key}" if corpus_key else config_name
+        persist_dir = os.path.join(CHROMA_DIR, collection_id)
         client = chromadb.PersistentClient(path=persist_dir)
         self.collection = client.get_or_create_collection(
-            name=config_name,
+            name=collection_id,
             metadata={"hnsw:space": "cosine"},
         )
 
@@ -50,19 +58,47 @@ class CorpusIndex:
 
 
 class IndexBuilder:
-    """Builds indexes for all chunking strategies."""
+    """Builds indexes for all chunking strategies.
 
-    def build_all_indexes(self, corpus_dir: str) -> dict[str, CorpusIndex]:
-        indexes = {}
+    Returns a `dict[str, Union[CorpusIndex, RaptorIndex]]`. RAPTOR is built only
+    when explicitly requested via `include_raptor=True` since it is the most
+    expensive index to construct.
+    """
+
+    def build_all_indexes(
+        self,
+        corpus_dir: str,
+        include_raptor: bool = False,
+        llm_config: LLMConfig | None = None,
+    ) -> dict[str, "Union[CorpusIndex, RaptorIndex]"]:
+        # Namespace persisted vector collections by corpus contents so a
+        # cached index for one corpus is never served for another (the
+        # RAPTOR tree cache already keys on this same hash).
+        from .raptor.cache import hash_corpus
+        corpus_key = hash_corpus(corpus_dir)[:12]
+
+        indexes: dict[str, Union[CorpusIndex, "RaptorIndex"]] = {}
         for strategy in ChunkingStrategy:
             config_name = strategy.value
-            persist_dir = os.path.join(CHROMA_DIR, config_name)
+            if strategy == ChunkingStrategy.RAPTOR_100:
+                if not include_raptor:
+                    continue
+                # Import lazily so non-RAPTOR runs don't require umap-learn.
+                from .raptor.tree_builder import RaptorTreeBuilder, RaptorBuildConfig
+
+                print(f"Building RAPTOR tree for chunking strategy: {config_name}...")
+                builder = RaptorTreeBuilder(
+                    build_config=RaptorBuildConfig(),
+                    llm_config=llm_config,
+                )
+                indexes[config_name] = builder.build(corpus_dir)
+                continue
 
             print(f"Building index for chunking strategy: {config_name}...")
             chunks = chunk_corpus(strategy, corpus_dir)
             print(f"  Chunked corpus into {len(chunks)} chunks")
 
-            index = CorpusIndex(chunks, config_name)
+            index = CorpusIndex(chunks, config_name, corpus_key=corpus_key)
             indexes[config_name] = index
             print(f"  Index built: {index.collection.count()} vectors in ChromaDB")
 

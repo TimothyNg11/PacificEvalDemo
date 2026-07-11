@@ -9,31 +9,30 @@ import yaml
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.config import (
-    RetrievalConfig, ChunkingStrategy, SearchStrategy,
-    CORPUS_DIR, EVAL_SET_PATH, LLMConfig, LLM_PRESETS,
+    RetrievalConfig,
+    CORPUS_DIR, EVAL_SET_PATH, LLMConfig, LLM_PRESETS, detect_llm_provider,
 )
 from src.indexer import IndexBuilder
 from src.generator import AnswerGenerator
-from src.retrievers import Retriever, get_reranker
+from src.retrievers import get_reranker, make_retriever
 from src.scorers import RetrievalScorer, GoldSimilarityScorer, KeyFactScorer
 
 
 def parse_config_name(name: str) -> RetrievalConfig:
-    parts = name.split("__")
-    if len(parts) != 3:
-        raise click.BadParameter(f"Invalid config name: {name}")
-    chunking = ChunkingStrategy(parts[0])
-    search = SearchStrategy(parts[1])
-    top_k = int(parts[2].replace("k", ""))
-    return RetrievalConfig(chunking=chunking, search=search, top_k=top_k)
+    """Parse a config name like 'fixed_256__vector__k3' back into a RetrievalConfig."""
+    try:
+        return RetrievalConfig.from_name(name)
+    except ValueError as e:
+        raise click.BadParameter(str(e))
 
 
 @click.command()
 @click.argument("config_name")
 @click.argument("question_id")
 @click.option(
-    "--llm", default="auto", type=click.Choice(["auto", "ollama", "openai"]),
-    help='LLM provider: "auto" (OpenAI if OPENAI_API_KEY is set, else Ollama), "ollama", or "openai"',
+    "--llm", default="auto", type=click.Choice(["auto", "ollama", "openai", "anthropic"]),
+    help='LLM provider: "auto" (Anthropic if ANTHROPIC_API_KEY is set, elif '
+         'OpenAI if OPENAI_API_KEY is set, else Ollama), "ollama", "openai", or "anthropic"',
 )
 def main(config_name, question_id, llm):
     """Debug a single config on a single question.
@@ -67,16 +66,23 @@ def main(config_name, question_id, llm):
     print(f"Difficulty: {question['difficulty']}")
     print(f"Gold sources: {question['gold_source_ids']}")
 
-    # Build index
+    # Build index (build RAPTOR tree too if a RAPTOR config was requested)
     print("\nBuilding index...")
     builder = IndexBuilder()
-    indexes = builder.build_all_indexes(CORPUS_DIR)
+    indexes = builder.build_all_indexes(CORPUS_DIR, include_raptor=config.is_raptor)
+    if config.chunking.value not in indexes:
+        click.echo(
+            f"Error: no index for chunking strategy {config.chunking.value!r} "
+            f"(available: {list(indexes.keys())}).",
+            err=True,
+        )
+        sys.exit(1)
     index = indexes[config.chunking.value]
 
     # Retrieve
     print("\nRetrieving...")
     reranker = get_reranker()
-    retriever = Retriever(index, reranker=reranker)
+    retriever = make_retriever(index, reranker=reranker)
     retrieval_result = retriever.retrieve(
         query=question["question"],
         strategy=config.search,
@@ -92,10 +98,11 @@ def main(config_name, question_id, llm):
     # Generate answer
     print("\n\nGenerating answer...")
     if llm == "auto":
-        llm = "openai" if os.environ.get("OPENAI_API_KEY") else "ollama"
+        llm = detect_llm_provider()
     llm_config = LLM_PRESETS[llm]
-    if llm == "openai" and not llm_config.api_key:
-        click.echo("Error: OPENAI_API_KEY environment variable is not set.", err=True)
+    if llm in ("openai", "anthropic") and not llm_config.api_key:
+        env_var = "OPENAI_API_KEY" if llm == "openai" else "ANTHROPIC_API_KEY"
+        click.echo(f"Error: {env_var} environment variable is not set.", err=True)
         sys.exit(1)
     print(f"Using LLM: {llm} ({llm_config.model} @ {llm_config.base_url})")
     generator = AnswerGenerator(llm_config=llm_config)

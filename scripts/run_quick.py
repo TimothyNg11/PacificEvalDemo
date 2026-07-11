@@ -16,12 +16,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.config import (
     RetrievalConfig, ChunkingStrategy, SearchStrategy,
-    LLMConfig, LLM_PRESETS,
+    LLMConfig, LLM_PRESETS, detect_llm_provider,
+    _RAPTOR_CHUNKINGS, _RAPTOR_SEARCHES,
 )
 from src.runner import BenchmarkRunner
 
-ALL_CHUNKING = list(ChunkingStrategy)
-ALL_SEARCH = list(SearchStrategy)
+# Baseline-only by default — sampling across the full enum (now including
+# RAPTOR) could produce invalid combos or require an expensive tree build
+# that the quick script isn't meant to trigger.
+ALL_CHUNKING = [c for c in ChunkingStrategy if c not in _RAPTOR_CHUNKINGS]
+ALL_SEARCH = [s for s in SearchStrategy if s not in _RAPTOR_SEARCHES]
 ALL_TOP_K = [3, 5, 10]
 NUM_CONFIGS = 5
 
@@ -54,8 +58,9 @@ def sample_configs(n=NUM_CONFIGS, seed=None):
 
 @click.command()
 @click.option(
-    "--llm", default="auto", type=click.Choice(["auto", "ollama", "openai"]),
-    help='LLM provider: "auto" (OpenAI if key is set, else Ollama), "ollama", or "openai"',
+    "--llm", default="auto", type=click.Choice(["auto", "ollama", "openai", "anthropic"]),
+    help='LLM provider: "auto" (Anthropic if key is set, elif OpenAI if key is set, '
+         'else Ollama), "ollama", "openai", or "anthropic"',
 )
 @click.option(
     "--num", "-n", default=NUM_CONFIGS, type=int,
@@ -83,10 +88,11 @@ def main(llm, num, seed):
         python scripts/run_quick.py -n 5 -s 42   # reproducible with a seed
     """
     if llm == "auto":
-        llm = "openai" if os.environ.get("OPENAI_API_KEY") else "ollama"
+        llm = detect_llm_provider()
     llm_config = LLM_PRESETS[llm]
-    if llm == "openai" and not llm_config.api_key:
-        click.echo("Error: OPENAI_API_KEY environment variable is not set.", err=True)
+    if llm in ("openai", "anthropic") and not llm_config.api_key:
+        env_var = "OPENAI_API_KEY" if llm == "openai" else "ANTHROPIC_API_KEY"
+        click.echo(f"Error: {env_var} environment variable is not set.", err=True)
         sys.exit(1)
 
     rng = random.Random(seed)

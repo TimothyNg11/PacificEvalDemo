@@ -1,0 +1,43 @@
+{
+  "aggregates": {
+    "avg_context_tokens": 1313.503157894737,
+    "avg_fact_recall": 0.5796140350877194,
+    "avg_faithfulness": NaN,
+    "avg_gold_similarity": 0.7758444503315708,
+    "avg_qasper_f1": NaN,
+    "avg_total_latency_ms": 2636.359455586133,
+    "n_results": 1425,
+    "unique_configs": 57,
+    "unique_questions": 25
+  },
+  "config_metadata": {
+    "enable_faithfulness": false,
+    "enable_qasper_f1": false,
+    "include_raptor": true
+  },
+  "git": {
+    "dirty": false,
+    "sha": "c0d3a564885d0cf02e5902da2290c93b9aa8f925"
+  },
+  "packages": {
+    "chromadb": "1.5.5",
+    "datasets": "4.8.5",
+    "matplotlib": "3.10.8",
+    "numpy": "2.4.4",
+    "openai": "2.30.0",
+    "pyyaml": "6.0.3",
+    "rank-bm25": "0.2.2",
+    "scikit-learn": "1.8.0",
+    "sentence-transformers": "5.3.0",
+    "tiktoken": "0.12.0",
+    "umap-learn": "0.5.12"
+  },
+  "requirements_sha256": "7fcefab11cab2294d5bde51eb9b08a57d53cb451fd727d882bf1981ed56422c8",
+  "runtime": {
+    "machine": "AMD64",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.12"
+  },
+  "schema_version": "1",
+  "timestamp_utc": "2026-07-11T13:06:15Z"
+}

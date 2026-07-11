@@ -1,0 +1,210 @@
+"""RaptorTreeBuilder: chunk a corpus into 100-token leaves, then recursively
+cluster + summarize to build a tree of abstraction levels.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+
+import numpy as np
+import tiktoken
+from sentence_transformers import SentenceTransformer
+
+from ..chunkers import _chunk_fixed, get_embedding_model
+from ..config import EMBEDDING_MODEL, LLMConfig
+from .cache import SummaryCache, TreeCache, hash_corpus, tree_key
+from .clustering import cluster_embeddings
+from .node import RaptorNode
+from .prompts import PROMPT_VERSION
+from .seed import set_global_seed
+from .summarizer import Summarizer
+from .tree_index import RaptorIndex
+
+
+_tokenizer = tiktoken.get_encoding("cl100k_base")
+
+
+@dataclass
+class RaptorBuildConfig:
+    leaf_window: int = 100
+    max_levels: int = 4
+    umap_seed: int = 42
+    gmm_seed: int = 42
+    # Paper-faithful fixed posterior threshold for GMM soft assignment
+    # (Sarthi et al., 2024). A node is assigned to every cluster whose
+    # posterior probability is >= this value.
+    soft_assign_threshold: float = 0.1
+    embedding_model: str = EMBEDDING_MODEL
+
+
+class RaptorTreeBuilder:
+    """Builds a RAPTOR tree from a corpus directory.
+
+    Caching is two-tier: a full-tree pickle (one-shot cache hit) and a
+    per-summary cache (granular reuse across param changes). On a cache miss
+    for the tree, summaries are still served from the per-summary cache
+    where possible.
+    """
+
+    def __init__(
+        self,
+        build_config: RaptorBuildConfig | None = None,
+        llm_config: LLMConfig | None = None,
+        tree_cache: TreeCache | None = None,
+        summary_cache: SummaryCache | None = None,
+    ):
+        self.cfg = build_config or RaptorBuildConfig()
+        self.llm_config = llm_config
+        self.tree_cache = tree_cache if tree_cache is not None else TreeCache()
+        self.summary_cache = summary_cache if summary_cache is not None else SummaryCache()
+        # Use the shared process-wide embedder for the (default) common
+        # case; only construct a dedicated one if a non-default model was
+        # explicitly configured.
+        if self.cfg.embedding_model == EMBEDDING_MODEL:
+            self.embedder = get_embedding_model()
+        else:
+            self.embedder = SentenceTransformer(self.cfg.embedding_model)
+        self.summarizer = Summarizer(llm_config=llm_config, cache=self.summary_cache)
+
+    def build(self, corpus_dir: str) -> RaptorIndex:
+        set_global_seed()
+
+        corpus_hash = hash_corpus(corpus_dir)
+        key = tree_key(
+            corpus_hash=corpus_hash,
+            leaf_window=self.cfg.leaf_window,
+            max_levels=self.cfg.max_levels,
+            umap_seed=self.cfg.umap_seed,
+            gmm_seed=self.cfg.gmm_seed,
+            summarizer_model=self.summarizer.llm_config.model,
+            embedding_model=self.cfg.embedding_model,
+            prompt_version=PROMPT_VERSION,
+            soft_assign_threshold=self.cfg.soft_assign_threshold,
+        )
+
+        cached = self.tree_cache.get(key)
+        if cached is not None:
+            print(f"  [raptor] tree cache hit ({key[:12]}...)")
+            return cached
+
+        print(f"  [raptor] building tree ({key[:12]}...)")
+        leaves = self._build_leaves(corpus_dir)
+        print(f"  [raptor] {len(leaves)} leaves")
+
+        nodes_by_id: dict[str, RaptorNode] = {n.node_id: n for n in leaves}
+        current_level_nodes = leaves
+
+        for level in range(1, self.cfg.max_levels + 1):
+            if len(current_level_nodes) <= 1:
+                break
+
+            embeddings = np.array(
+                [n.embedding for n in current_level_nodes], dtype=np.float32
+            )
+            clusters = cluster_embeddings(
+                embeddings,
+                umap_seed=self.cfg.umap_seed,
+                gmm_seed=self.cfg.gmm_seed,
+                soft_assign_threshold=self.cfg.soft_assign_threshold,
+            )
+            if len(clusters) <= 1 and len(clusters[0]) == len(current_level_nodes):
+                # No further partitioning possible — single super-cluster
+                break
+
+            print(
+                f"  [raptor] level {level}: clustering {len(current_level_nodes)} "
+                f"nodes into {len(clusters)} clusters"
+            )
+
+            parents: list[RaptorNode] = []
+            for cluster_idx, member_indices in enumerate(clusters):
+                child_nodes = [current_level_nodes[i] for i in member_indices]
+                summary_text = self.summarizer.summarize([c.text for c in child_nodes])
+                if not summary_text:
+                    continue
+                summary_emb = self.embedder.encode(summary_text).tolist()
+                source_files: list[str] = []
+                seen: set[str] = set()
+                for c in child_nodes:
+                    for sf in c.source_files:
+                        if sf not in seen:
+                            seen.add(sf)
+                            source_files.append(sf)
+                parent = RaptorNode(
+                    # Deterministic id (not uuid4()) so two builds of the
+                    # same corpus + params produce identical node ids —
+                    # required for reproducible chunk_index derivation and
+                    # for the tree/summary caches to be meaningfully
+                    # comparable across runs.
+                    node_id=f"L{level}_C{cluster_idx}",
+                    text=summary_text,
+                    embedding=summary_emb,
+                    level=level,
+                    token_count=len(_tokenizer.encode(summary_text)),
+                    source_files=source_files,
+                    children=[c.node_id for c in child_nodes],
+                )
+                parents.append(parent)
+                nodes_by_id[parent.node_id] = parent
+
+            if not parents:
+                break
+            current_level_nodes = parents
+
+        root_ids = [n.node_id for n in current_level_nodes]
+        index = RaptorIndex(
+            nodes_by_id=nodes_by_id,
+            root_ids=root_ids,
+            tree_hash=key,
+        )
+        self.tree_cache.put(key, index)
+        print(
+            f"  [raptor] tree built: {len(index)} nodes, "
+            f"depth={index.max_level()}, {len(root_ids)} roots; "
+            f"summary calls={self.summarizer.call_count}, "
+            f"summary cache hits={self.summarizer.cache_hits}"
+        )
+        return index
+
+    def _build_leaves(self, corpus_dir: str) -> list[RaptorNode]:
+        """Chunk corpus into ~`leaf_window`-token windows; embed.
+
+        Reuses `chunkers._chunk_fixed` (the same windowing logic as the
+        baseline `raptor_100` chunker, with overlap=0) instead of a
+        hand-rolled loop.
+        """
+        leaves: list[RaptorNode] = []
+        leaf_idx = 0
+        for root, _dirs, files in os.walk(corpus_dir):
+            for filename in sorted(files):
+                if not filename.endswith(".md"):
+                    continue
+                filepath = os.path.join(root, filename)
+                rel_path = os.path.relpath(filepath, corpus_dir).replace("\\", "/")
+                with open(filepath, "r", encoding="utf-8") as f:
+                    text = f.read()
+                chunks = _chunk_fixed(
+                    text, rel_path, window=self.cfg.leaf_window, overlap=0,
+                    strategy="raptor_leaf",
+                )
+                for chunk in chunks:
+                    leaves.append(
+                        RaptorNode(
+                            node_id=f"leaf_{leaf_idx}",
+                            text=chunk.text,
+                            embedding=[],  # filled below
+                            level=0,
+                            token_count=len(_tokenizer.encode(chunk.text)),
+                            source_files=[rel_path],
+                            children=[],
+                        )
+                    )
+                    leaf_idx += 1
+
+        if leaves:
+            texts = [n.text for n in leaves]
+            embeddings = self.embedder.encode(texts, show_progress_bar=len(texts) > 200)
+            for n, emb in zip(leaves, embeddings):
+                n.embedding = emb.tolist()
+        return leaves

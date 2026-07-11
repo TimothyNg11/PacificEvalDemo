@@ -105,11 +105,21 @@ def test_hybrid_rerank_changes_order():
 
 
 def test_top_k_respected():
-    """Verify top_k is respected — never return more than top_k."""
+    """Verify top_k is respected — never return more than top_k.
+
+    Only checks the baseline `Retriever` strategies; RAPTOR strategies are
+    covered by tests/test_raptor.py against `RaptorRetriever`.
+    """
     index = _build_test_index()
     retriever = Retriever(index)
 
-    for strategy in SearchStrategy:
+    baseline_strategies = [
+        SearchStrategy.VECTOR,
+        SearchStrategy.BM25,
+        SearchStrategy.HYBRID,
+        SearchStrategy.HYBRID_RERANK,
+    ]
+    for strategy in baseline_strategies:
         for top_k in [1, 2, 3]:
             result = retriever.retrieve("programming language", strategy, top_k=top_k)
             assert len(result.chunks) <= top_k, (
@@ -133,3 +143,28 @@ if __name__ == "__main__":
         print("All retriever tests passed!")
     finally:
         _cleanup_test_index()
+
+
+def test_same_strategy_different_corpus_not_cross_served():
+    """Regression: persisted Chroma collections must be namespaced by corpus.
+
+    Before the corpus_key namespace, a cached collection for corpus A was
+    silently reused for corpus B under the same chunking strategy; B's vector
+    queries then returned A's ids, which resolve to no chunk -> empty
+    retrievals (observed as 0-chunk vector rows on the QASPER corpus).
+    """
+    chunks_a = [Chunk(text="alpha document about volcanoes and magma flows",
+                      source_file="a.md", chunk_index=0, chunking_strategy="test")]
+    chunks_b = [Chunk(text="beta document about glaciers and ice sheets",
+                      source_file="b.md", chunk_index=0, chunking_strategy="test"),
+                Chunk(text="beta document second chunk about permafrost",
+                      source_file="b2.md", chunk_index=0, chunking_strategy="test")]
+    name = f"test_retriever_{os.getpid()}_{id(object())}"
+    index_a = CorpusIndex(chunks_a, name, corpus_key="corpusA")
+    index_b = CorpusIndex(chunks_b, name, corpus_key="corpusB")
+    assert index_a.collection.count() == 1
+    assert index_b.collection.count() == 2  # not served A's cached collection
+    retriever = Retriever(index_b, reranker=get_reranker())
+    result = retriever.retrieve("glaciers", strategy=SearchStrategy.VECTOR, top_k=1)
+    assert len(result.chunks) == 1
+    assert result.chunks[0].source_file.startswith("b")
