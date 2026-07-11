@@ -143,3 +143,28 @@ if __name__ == "__main__":
         print("All retriever tests passed!")
     finally:
         _cleanup_test_index()
+
+
+def test_same_strategy_different_corpus_not_cross_served():
+    """Regression: persisted Chroma collections must be namespaced by corpus.
+
+    Before the corpus_key namespace, a cached collection for corpus A was
+    silently reused for corpus B under the same chunking strategy; B's vector
+    queries then returned A's ids, which resolve to no chunk -> empty
+    retrievals (observed as 0-chunk vector rows on the QASPER corpus).
+    """
+    chunks_a = [Chunk(text="alpha document about volcanoes and magma flows",
+                      source_file="a.md", chunk_index=0, chunking_strategy="test")]
+    chunks_b = [Chunk(text="beta document about glaciers and ice sheets",
+                      source_file="b.md", chunk_index=0, chunking_strategy="test"),
+                Chunk(text="beta document second chunk about permafrost",
+                      source_file="b2.md", chunk_index=0, chunking_strategy="test")]
+    name = f"test_retriever_{os.getpid()}_{id(object())}"
+    index_a = CorpusIndex(chunks_a, name, corpus_key="corpusA")
+    index_b = CorpusIndex(chunks_b, name, corpus_key="corpusB")
+    assert index_a.collection.count() == 1
+    assert index_b.collection.count() == 2  # not served A's cached collection
+    retriever = Retriever(index_b, reranker=get_reranker())
+    result = retriever.retrieve("glaciers", strategy=SearchStrategy.VECTOR, top_k=1)
+    assert len(result.chunks) == 1
+    assert result.chunks[0].source_file.startswith("b")
