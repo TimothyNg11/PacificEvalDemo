@@ -67,8 +67,19 @@ def main(results_path, metric, tolerance, strict):
         sys.exit(0 if not strict else 2)
 
     # Overall averages
-    tree_overall = _avg([v for cat_vals in by_search_cat["raptor_tree"].values() for v in cat_vals])
-    coll_overall = _avg([v for cat_vals in by_search_cat["raptor_collapsed"].values() for v in cat_vals])
+    tree_values = [v for cat_vals in by_search_cat["raptor_tree"].values() for v in cat_vals]
+    coll_values = [v for cat_vals in by_search_cat["raptor_collapsed"].values() for v in cat_vals]
+    valid_tree = [v for v in tree_values if v is not None and v != -1.0]
+    valid_coll = [v for v in coll_values if v is not None and v != -1.0]
+    if not valid_tree or not valid_coll:
+        print(
+            f"NO DATA for metric '{metric}' — run the benchmark with "
+            "--qasper-f1/--faithfulness"
+        )
+        sys.exit(2)
+
+    tree_overall = _avg(tree_values)
+    coll_overall = _avg(coll_values)
 
     print(f"\n[overall] raptor_tree {metric}      = {tree_overall:.3f}")
     print(f"[overall] raptor_collapsed {metric} = {coll_overall:.3f}")

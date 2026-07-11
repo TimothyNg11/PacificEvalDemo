@@ -5,7 +5,6 @@ cluster + summarize to build a tree of abstraction levels.
 from __future__ import annotations
 
 import os
-import uuid
 from dataclasses import dataclass
 
 import numpy as np
@@ -32,7 +31,10 @@ class RaptorBuildConfig:
     max_levels: int = 4
     umap_seed: int = 42
     gmm_seed: int = 42
-    soft_assign_threshold: float = 0.0  # placeholder; threshold is 1/k in clustering
+    # Paper-faithful fixed posterior threshold for GMM soft assignment
+    # (Sarthi et al., 2024). A node is assigned to every cluster whose
+    # posterior probability is >= this value.
+    soft_assign_threshold: float = 0.1
     embedding_model: str = EMBEDDING_MODEL
 
 
@@ -99,6 +101,7 @@ class RaptorTreeBuilder:
                 embeddings,
                 umap_seed=self.cfg.umap_seed,
                 gmm_seed=self.cfg.gmm_seed,
+                soft_assign_threshold=self.cfg.soft_assign_threshold,
             )
             if len(clusters) <= 1 and len(clusters[0]) == len(current_level_nodes):
                 # No further partitioning possible — single super-cluster
@@ -124,7 +127,12 @@ class RaptorTreeBuilder:
                             seen.add(sf)
                             source_files.append(sf)
                 parent = RaptorNode(
-                    node_id=str(uuid.uuid4()),
+                    # Deterministic id (not uuid4()) so two builds of the
+                    # same corpus + params produce identical node ids —
+                    # required for reproducible chunk_index derivation and
+                    # for the tree/summary caches to be meaningfully
+                    # comparable across runs.
+                    node_id=f"L{level}_C{cluster_idx}",
                     text=summary_text,
                     embedding=summary_emb,
                     level=level,

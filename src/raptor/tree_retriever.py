@@ -138,12 +138,18 @@ class RaptorRetriever:
             frontier_scored = self._score_nodes(q, frontier_ids)
             advanced = False
             for node, node_score in frontier_scored:
-                if not node.children:
+                resolved_children = [
+                    cid for cid in node.children if cid in self.index.nodes_by_id
+                ]
+                if not resolved_children:
+                    # No children, or every child id is unresolved (e.g. a
+                    # dangling reference from a partial/stale build) — treat
+                    # this node as terminal instead of scoring an empty set.
                     terminal[node.node_id] = max(
                         terminal.get(node.node_id, -np.inf), node_score
                     )
                     continue
-                child_scored = self._score_nodes(q, node.children)
+                child_scored = self._score_nodes(q, resolved_children)
                 child_scores = np.array(
                     [s for _, s in child_scored], dtype=np.float32
                 )

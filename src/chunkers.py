@@ -16,6 +16,10 @@ class Chunk:
     source_file: str
     chunk_index: int
     chunking_strategy: str
+    # Multi-source provenance (RAPTOR summary nodes cover several original
+    # files). Baseline chunkers leave this None — such chunks have exactly
+    # one opaque source, `source_file`, and it is never parsed for structure.
+    source_files: list[str] | None = None
 
 
 _tokenizer = tiktoken.get_encoding("cl100k_base")

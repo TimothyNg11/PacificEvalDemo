@@ -96,6 +96,46 @@ def _paper_to_markdown(paper: dict) -> str:
     return "\n".join(out)
 
 
+def _collect_answers(ans_block: dict) -> tuple[str, list[str], str, list[str]] | None:
+    """Aggregate one question's per-annotator answers into a gold-answer set.
+
+    Returns (chosen_answer, gold_answers, answer_type, spans), or None if
+    `ans_block` has no annotator answer entries at all (question should be
+    skipped). `chosen_answer` is the first usable (non-"Unanswerable")
+    annotator answer, used for embedding-similarity scoring. `gold_answers`
+    collects EVERY usable annotator answer, deduplicated and order-preserved
+    — QASPER questions typically have multiple independently-written
+    reference answers, and scoring against only the first discards
+    legitimate paraphrases that QasperF1Scorer's max-over-references is
+    designed to credit. If no annotator answer is usable, both fall back to
+    a single "Unanswerable" entry.
+    """
+    answer_entries = ans_block.get("answer", [])
+    if not answer_entries:
+        return None
+
+    usable: list[tuple[str, str, list[str]]] = []
+    fallback_atype = None
+    for ans in answer_entries:
+        text, atype = _classify_answer(ans)
+        if text and text != "Unanswerable":
+            usable.append((text, atype, ans.get("extractive_spans") or []))
+        elif fallback_atype is None:
+            fallback_atype = atype or "unanswerable"
+
+    if usable:
+        seen: set[str] = set()
+        gold_answers = []
+        for text, _, _ in usable:
+            if text not in seen:
+                seen.add(text)
+                gold_answers.append(text)
+        chosen_answer, chosen_atype, spans = usable[0]
+        return (chosen_answer, gold_answers, chosen_atype, spans)
+
+    return ("Unanswerable", ["Unanswerable"], fallback_atype or "unanswerable", [])
+
+
 def _extract_key_facts(answer_text: str, spans: list[str], max_facts: int = 4) -> list[str]:
     """Pull short snippets to use as KeyFactScorer match targets.
 
@@ -194,23 +234,13 @@ def main(n_papers, questions_per_paper, seed, corpus_out, eval_out, split):
         if not questions:
             continue
 
-        # Group answers per question; keep the first usable one per question
+        # Group answers per question; collect every usable annotator answer.
         per_question_records: list[dict] = []
         for q_text, ans_block in zip(questions, answers_all):
-            chosen_answer = None
-            atype = None
-            spans: list[str] = []
-            for ans in ans_block.get("answer", []):
-                text, atype = _classify_answer(ans)
-                if text and text != "Unanswerable":
-                    chosen_answer = text
-                    spans = ans.get("extractive_spans") or []
-                    break
-                elif chosen_answer is None:
-                    chosen_answer = text
-                    atype = atype or "unanswerable"
-            if not chosen_answer:
+            collected = _collect_answers(ans_block)
+            if collected is None:
                 continue
+            chosen_answer, gold_answers, atype, spans = collected
 
             id_counter += 1
             prefix = {
@@ -225,6 +255,7 @@ def main(n_papers, questions_per_paper, seed, corpus_out, eval_out, split):
                 "id": f"qa_{prefix}_{id_counter:04d}",
                 "question": q_text.strip(),
                 "gold_answer": chosen_answer,
+                "gold_answers": gold_answers,
                 "gold_source_ids": [rel_path],
                 "key_facts": _extract_key_facts(chosen_answer, spans),
                 "category": CATEGORY_BY_ANSWER_TYPE.get(atype, "extractive_evidence"),

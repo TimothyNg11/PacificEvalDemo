@@ -1,12 +1,15 @@
 """UMAP dimensionality reduction + GMM soft clustering with BIC selection.
 
-Faithful to the RAPTOR paper:
+Faithful to the RAPTOR paper (Sarthi et al., 2024):
 - Reduce embeddings via UMAP (cosine metric, ~10 dims).
 - Two-stage GMM: a global GMM partitions the corpus, then within each global
   cluster a local GMM finds fine-grained sub-clusters. Cluster count at each
   stage is chosen by BIC over a small grid.
-- Soft assignment: a node belongs to every cluster whose posterior probability
-  is at least 1/n_clusters.
+- Soft assignment: a node belongs to every cluster whose posterior
+  probability is at least a fixed threshold (the paper uses 0.1), not a
+  k-dependent threshold. A k-dependent 1/k threshold would make soft
+  assignment strictness vary with how many clusters BIC happens to pick,
+  which the paper's fixed threshold avoids.
 """
 
 from __future__ import annotations
@@ -72,14 +75,18 @@ def _bic_best_gmm(
     return best_gmm
 
 
-def _soft_assign(gmm: GaussianMixture, points: np.ndarray) -> list[list[int]]:
-    """Soft-assign each point to every cluster where p >= 1/k.
+def _soft_assign(
+    gmm: GaussianMixture, points: np.ndarray, threshold: float
+) -> list[list[int]]:
+    """Soft-assign each point to every cluster where posterior p >= threshold.
+
+    Points assigned to no cluster (all posteriors below threshold) fall back
+    to their single best (argmax) cluster so no point is orphaned.
 
     Returns: clusters[cluster_index] -> list of point indices.
     """
     probs = gmm.predict_proba(points)  # (n, k)
     k = probs.shape[1]
-    threshold = 1.0 / k if k > 0 else 1.0
     clusters: list[list[int]] = [[] for _ in range(k)]
     for i, row in enumerate(probs):
         assigned = np.where(row >= threshold)[0]
@@ -100,11 +107,13 @@ def cluster_embeddings(
     umap_neighbors: int = 15,
     max_global_k: int = 50,
     max_local_k: int = 10,
+    soft_assign_threshold: float = 0.1,
 ) -> list[list[int]]:
     """Two-stage UMAP + GMM clustering. Returns a list of clusters,
     each cluster being a list of indices into `embeddings`.
 
-    Indices may appear in multiple clusters (soft assignment).
+    Indices may appear in multiple clusters (soft assignment against
+    `soft_assign_threshold`).
     """
     n = len(embeddings)
     if n <= 2:
@@ -119,7 +128,7 @@ def cluster_embeddings(
     )
     global_max_k = min(max_global_k, max(1, n // 2))
     global_gmm = _bic_best_gmm(global_reduced, max_k=global_max_k, seed=gmm_seed)
-    global_clusters = _soft_assign(global_gmm, global_reduced)
+    global_clusters = _soft_assign(global_gmm, global_reduced, soft_assign_threshold)
 
     # ---- Stage 2: local within each global cluster ----
     final_clusters: list[list[int]] = []
@@ -140,7 +149,7 @@ def cluster_embeddings(
         )
         local_max_k = min(max_local_k, max(1, len(gc) // 2))
         local_gmm = _bic_best_gmm(local_reduced, max_k=local_max_k, seed=gmm_seed)
-        local_subclusters = _soft_assign(local_gmm, local_reduced)
+        local_subclusters = _soft_assign(local_gmm, local_reduced, soft_assign_threshold)
         # Map local indices back to global embedding indices
         for sub in local_subclusters:
             final_clusters.append([gc[i] for i in sub])

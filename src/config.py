@@ -47,6 +47,50 @@ class RetrievalConfig:
     def is_raptor(self) -> bool:
         return self.chunking in _RAPTOR_CHUNKINGS or self.search in _RAPTOR_SEARCHES
 
+    @classmethod
+    def from_name(cls, name: str) -> "RetrievalConfig":
+        """Parse a config name like 'fixed_256__vector__k3' into a RetrievalConfig.
+
+        Raises ValueError (never silently returns a bogus config) if the
+        name is malformed, names an unknown chunking/search strategy, or
+        pairs a chunking/search combination that `_config_is_valid` rejects
+        (RAPTOR chunking requires a raptor_* search mode and vice versa).
+        """
+        parts = name.split("__")
+        if len(parts) != 3:
+            raise ValueError(
+                f"Invalid config name {name!r}: expected 'chunking__search__kN'"
+            )
+        chunking_str, search_str, k_str = parts
+
+        try:
+            chunking = ChunkingStrategy(chunking_str)
+        except ValueError:
+            raise ValueError(
+                f"Invalid config name {name!r}: unknown chunking strategy "
+                f"{chunking_str!r} (valid: {[c.value for c in ChunkingStrategy]})"
+            )
+        try:
+            search = SearchStrategy(search_str)
+        except ValueError:
+            raise ValueError(
+                f"Invalid config name {name!r}: unknown search strategy "
+                f"{search_str!r} (valid: {[s.value for s in SearchStrategy]})"
+            )
+        if not k_str.startswith("k") or not k_str[1:].isdigit():
+            raise ValueError(
+                f"Invalid config name {name!r}: expected top_k like 'k3', got {k_str!r}"
+            )
+        top_k = int(k_str[1:])
+
+        if not _config_is_valid(chunking, search):
+            raise ValueError(
+                f"Invalid config name {name!r}: chunking {chunking_str!r} and "
+                f"search {search_str!r} cannot be combined - RAPTOR chunking "
+                f"requires a raptor_* search mode and vice versa."
+            )
+        return cls(chunking=chunking, search=search, top_k=top_k)
+
 
 def _config_is_valid(chunking: ChunkingStrategy, search: SearchStrategy) -> bool:
     """RAPTOR search strategies only pair with RAPTOR chunking, and vice versa."""

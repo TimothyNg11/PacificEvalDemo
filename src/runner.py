@@ -49,6 +49,17 @@ class EvalResult:
     faithfulness_total: int = -1
 
 
+def results_path(suffix: str, results_dir: str = RESULTS_DIR) -> str:
+    """Compute the results.jsonl path for a given --results-suffix.
+
+    Single-sourced so `BenchmarkRunner.run()` (which writes the file) and
+    `run_benchmark.py`'s final summary print can never drift out of sync on
+    the actual filename.
+    """
+    file_suffix = f"_{suffix}" if suffix else ""
+    return os.path.join(results_dir, "raw", f"results{file_suffix}.jsonl")
+
+
 class BenchmarkRunner:
     """Orchestrates the full benchmark run."""
 
@@ -210,7 +221,7 @@ class BenchmarkRunner:
 
         # Save results
         suffix = f"_{self.results_suffix}" if self.results_suffix else ""
-        output_path = os.path.join(RESULTS_DIR, "raw", f"results{suffix}.jsonl")
+        output_path = results_path(self.results_suffix)
         save_results(all_results, output_path)
 
         # Write a results manifest (reproducibility infra)

@@ -9,7 +9,7 @@ import yaml
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.config import (
-    RetrievalConfig, ChunkingStrategy, SearchStrategy,
+    RetrievalConfig,
     CORPUS_DIR, EVAL_SET_PATH, LLMConfig, LLM_PRESETS,
 )
 from src.indexer import IndexBuilder
@@ -19,13 +19,11 @@ from src.scorers import RetrievalScorer, GoldSimilarityScorer, KeyFactScorer
 
 
 def parse_config_name(name: str) -> RetrievalConfig:
-    parts = name.split("__")
-    if len(parts) != 3:
-        raise click.BadParameter(f"Invalid config name: {name}")
-    chunking = ChunkingStrategy(parts[0])
-    search = SearchStrategy(parts[1])
-    top_k = int(parts[2].replace("k", ""))
-    return RetrievalConfig(chunking=chunking, search=search, top_k=top_k)
+    """Parse a config name like 'fixed_256__vector__k3' back into a RetrievalConfig."""
+    try:
+        return RetrievalConfig.from_name(name)
+    except ValueError as e:
+        raise click.BadParameter(str(e))
 
 
 @click.command()

@@ -70,7 +70,7 @@ def main():
                 continue
             top_score = result.scores[0] if result.scores else float("nan")
             sources = ", ".join(
-                sorted({s for c in result.chunks for s in c.source_file.split(";")})
+                sorted({s for c in result.chunks for s in (c.source_files or [c.source_file])})
             )
             print(
                 f"  {q!r}\n"

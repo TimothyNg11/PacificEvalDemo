@@ -27,16 +27,31 @@ class KeyFactMetrics:
 def _chunk_sources(chunk: Chunk) -> set[str]:
     """Return the set of source files a chunk covers.
 
-    Most chunks have a single source. RAPTOR summary nodes join their
-    constituent sources with `;` (see `RaptorNode.to_chunk`).
+    RAPTOR summary nodes set `chunk.source_files` to every constituent leaf
+    source (see `RaptorNode.to_chunk`). Baseline chunkers leave
+    `source_files` unset (None), so their chunk covers exactly one opaque
+    source, `chunk.source_file` — it is never split or parsed, even if the
+    filename itself happens to contain `;`.
     """
-    if ";" in chunk.source_file:
-        return {s for s in chunk.source_file.split(";") if s}
+    if chunk.source_files:
+        return set(chunk.source_files)
     return {chunk.source_file}
 
 
 class RetrievalScorer:
-    """Scores retrieval quality by comparing retrieved chunks to gold source files."""
+    """Scores retrieval quality by comparing retrieved chunks to gold source files.
+
+    Context precision and distractor rate use FRACTIONAL per-chunk credit:
+    a chunk covering N sources, M of which are in the target set, scores
+    M/N rather than 1.0. This matters for RAPTOR summary nodes, which can
+    cover many source files (e.g. a root summary spanning 10 documents) —
+    without fractional credit, a single such chunk would count as "fully
+    relevant" merely because one of its many sources happens to be gold,
+    inflating RAPTOR's precision relative to baseline chunkers (which always
+    have exactly one source per chunk, so their fraction is naturally 0 or
+    1). Context recall is unaffected: it is coverage over the union of
+    retrieved sources, not a per-chunk average.
+    """
 
     def score(
         self,
@@ -54,12 +69,12 @@ class RetrievalScorer:
         total = len(retrieved_chunks)
         gold_set = set(gold_source_ids)
 
-        # Context precision: fraction of retrieved chunks whose source set
-        # intersects the gold set.
-        relevant_count = sum(
-            1 for c in retrieved_chunks if _chunk_sources(c) & gold_set
-        )
-        context_precision = relevant_count / total
+        # Context precision: mean per-chunk fractional credit |sources ∩ gold| / |sources|.
+        precision_scores = [
+            len(_chunk_sources(c) & gold_set) / len(_chunk_sources(c))
+            for c in retrieved_chunks
+        ]
+        context_precision = sum(precision_scores) / total
 
         # Context recall: fraction of gold sources covered by some retrieved chunk.
         retrieved_sources: set[str] = set()
@@ -68,14 +83,15 @@ class RetrievalScorer:
         covered = sum(1 for g in gold_source_ids if g in retrieved_sources)
         context_recall = covered / len(gold_source_ids) if gold_source_ids else 0.0
 
-        # Distractor rate
+        # Distractor rate: same fractional treatment as precision, against distractors.
         distractor_rate = 0.0
         if distractor_ids:
             distractor_set = set(distractor_ids)
-            distractor_count = sum(
-                1 for c in retrieved_chunks if _chunk_sources(c) & distractor_set
-            )
-            distractor_rate = distractor_count / total
+            distractor_scores = [
+                len(_chunk_sources(c) & distractor_set) / len(_chunk_sources(c))
+                for c in retrieved_chunks
+            ]
+            distractor_rate = sum(distractor_scores) / total
 
         return RetrievalMetrics(
             context_precision=context_precision,

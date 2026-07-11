@@ -8,20 +8,16 @@ import click
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.config import RetrievalConfig, ChunkingStrategy, SearchStrategy, generate_all_configs, LLMConfig, LLM_PRESETS
-from src.runner import BenchmarkRunner
+from src.config import RetrievalConfig, generate_all_configs, LLMConfig, LLM_PRESETS
+from src.runner import BenchmarkRunner, results_path
 
 
 def parse_config_name(name: str) -> RetrievalConfig:
     """Parse a config name like 'fixed_256__vector__k3' back into a RetrievalConfig."""
-    parts = name.split("__")
-    if len(parts) != 3:
-        raise click.BadParameter(f"Invalid config name: {name}")
-
-    chunking = ChunkingStrategy(parts[0])
-    search = SearchStrategy(parts[1])
-    top_k = int(parts[2].replace("k", ""))
-    return RetrievalConfig(chunking=chunking, search=search, top_k=top_k)
+    try:
+        return RetrievalConfig.from_name(name)
+    except ValueError as e:
+        raise click.BadParameter(str(e))
 
 
 @click.command()
@@ -116,7 +112,7 @@ def main(configs, questions, llm, include_raptor, corpus_dir, eval_set_path,
     print(f"Total evaluations: {total}")
     print(f"Average gold similarity: {avg_similarity:.3f}")
     print(f"Average fact recall: {avg_fact_recall:.3f}")
-    print(f"Results saved to results/raw/results.jsonl")
+    print(f"Results saved to {results_path(results_suffix)}")
 
 
 if __name__ == "__main__":
