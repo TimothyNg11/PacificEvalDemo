@@ -20,17 +20,23 @@ class GenerationResult:
 _tokenizer = tiktoken.get_encoding("cl100k_base")
 
 
+def resolve_llm_client(llm_config: LLMConfig | None) -> tuple[LLMConfig, OpenAI]:
+    """Resolve an `LLMConfig` (defaulting to the local Ollama preset) and
+    build the matching OpenAI-compatible client. Shared by `AnswerGenerator`
+    and `raptor.summarizer.Summarizer` so there's one place that knows how
+    to turn an `LLMConfig` into a live client.
+    """
+    if llm_config is None:
+        llm_config = LLM_PRESETS["ollama"]
+    client = OpenAI(base_url=llm_config.base_url, api_key=llm_config.api_key)
+    return llm_config, client
+
+
 class AnswerGenerator:
     """Generates answers from retrieved context chunks using an LLM."""
 
     def __init__(self, llm_config: LLMConfig | None = None):
-        if llm_config is None:
-            llm_config = LLM_PRESETS["ollama"]
-        self.llm_config = llm_config
-        self.client = OpenAI(
-            base_url=llm_config.base_url,
-            api_key=llm_config.api_key,
-        )
+        self.llm_config, self.client = resolve_llm_client(llm_config)
 
     def generate(self, question: str, context_chunks: list[Chunk]) -> GenerationResult:
         # Assemble context

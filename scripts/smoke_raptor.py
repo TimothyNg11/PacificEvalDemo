@@ -38,7 +38,6 @@ def main():
 
     build_cfg = RaptorBuildConfig(
         leaf_window=100,
-        leaf_overlap=0,
         max_levels=2,  # shallow tree for smoke speed
     )
     # Use llama3.2:3b for fast summarization in the smoke test.

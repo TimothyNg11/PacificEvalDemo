@@ -11,6 +11,7 @@ import numpy as np
 import tiktoken
 from sentence_transformers import SentenceTransformer
 
+from ..chunkers import _chunk_fixed, get_embedding_model
 from ..config import EMBEDDING_MODEL, LLMConfig
 from .cache import SummaryCache, TreeCache, hash_corpus, tree_key
 from .clustering import cluster_embeddings
@@ -27,7 +28,6 @@ _tokenizer = tiktoken.get_encoding("cl100k_base")
 @dataclass
 class RaptorBuildConfig:
     leaf_window: int = 100
-    leaf_overlap: int = 0
     max_levels: int = 4
     umap_seed: int = 42
     gmm_seed: int = 42
@@ -58,7 +58,13 @@ class RaptorTreeBuilder:
         self.llm_config = llm_config
         self.tree_cache = tree_cache if tree_cache is not None else TreeCache()
         self.summary_cache = summary_cache if summary_cache is not None else SummaryCache()
-        self.embedder = SentenceTransformer(self.cfg.embedding_model)
+        # Use the shared process-wide embedder for the (default) common
+        # case; only construct a dedicated one if a non-default model was
+        # explicitly configured.
+        if self.cfg.embedding_model == EMBEDDING_MODEL:
+            self.embedder = get_embedding_model()
+        else:
+            self.embedder = SentenceTransformer(self.cfg.embedding_model)
         self.summarizer = Summarizer(llm_config=llm_config, cache=self.summary_cache)
 
     def build(self, corpus_dir: str) -> RaptorIndex:
@@ -68,7 +74,6 @@ class RaptorTreeBuilder:
         key = tree_key(
             corpus_hash=corpus_hash,
             leaf_window=self.cfg.leaf_window,
-            leaf_overlap=self.cfg.leaf_overlap,
             max_levels=self.cfg.max_levels,
             umap_seed=self.cfg.umap_seed,
             gmm_seed=self.cfg.gmm_seed,
@@ -139,7 +144,6 @@ class RaptorTreeBuilder:
                     token_count=len(_tokenizer.encode(summary_text)),
                     source_files=source_files,
                     children=[c.node_id for c in child_nodes],
-                    cluster_id=cluster_idx,
                 )
                 parents.append(parent)
                 nodes_by_id[parent.node_id] = parent
@@ -164,7 +168,12 @@ class RaptorTreeBuilder:
         return index
 
     def _build_leaves(self, corpus_dir: str) -> list[RaptorNode]:
-        """Chunk corpus into ~`leaf_window`-token windows; embed."""
+        """Chunk corpus into ~`leaf_window`-token windows; embed.
+
+        Reuses `chunkers._chunk_fixed` (the same windowing logic as the
+        baseline `raptor_100` chunker, with overlap=0) instead of a
+        hand-rolled loop.
+        """
         leaves: list[RaptorNode] = []
         leaf_idx = 0
         for root, _dirs, files in os.walk(corpus_dir):
@@ -175,32 +184,23 @@ class RaptorTreeBuilder:
                 rel_path = os.path.relpath(filepath, corpus_dir).replace("\\", "/")
                 with open(filepath, "r", encoding="utf-8") as f:
                     text = f.read()
-                tokens = _tokenizer.encode(text)
-                start = 0
-                while start < len(tokens):
-                    end = min(start + self.cfg.leaf_window, len(tokens))
-                    chunk_tokens = tokens[start:end]
-                    chunk_text = _tokenizer.decode(chunk_tokens)
+                chunks = _chunk_fixed(
+                    text, rel_path, window=self.cfg.leaf_window, overlap=0,
+                    strategy="raptor_leaf",
+                )
+                for chunk in chunks:
                     leaves.append(
                         RaptorNode(
                             node_id=f"leaf_{leaf_idx}",
-                            text=chunk_text,
+                            text=chunk.text,
                             embedding=[],  # filled below
                             level=0,
-                            token_count=len(chunk_tokens),
+                            token_count=len(_tokenizer.encode(chunk.text)),
                             source_files=[rel_path],
                             children=[],
-                            leaf_indices=[leaf_idx],
-                            cluster_id=None,
                         )
                     )
                     leaf_idx += 1
-                    if end == len(tokens):
-                        break
-                    if self.cfg.leaf_overlap > 0:
-                        start = end - self.cfg.leaf_overlap
-                    else:
-                        start = end
 
         if leaves:
             texts = [n.text for n in leaves]

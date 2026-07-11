@@ -57,7 +57,6 @@ def test_tree_key_changes_on_each_param():
     base = dict(
         corpus_hash="x",
         leaf_window=100,
-        leaf_overlap=0,
         max_levels=4,
         umap_seed=42,
         gmm_seed=42,
@@ -70,7 +69,6 @@ def test_tree_key_changes_on_each_param():
     for field in (
         "corpus_hash",
         "leaf_window",
-        "leaf_overlap",
         "max_levels",
         "umap_seed",
         "gmm_seed",

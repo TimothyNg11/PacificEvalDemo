@@ -90,7 +90,6 @@ def test_tree_key_changes_with_params():
     base = dict(
         corpus_hash="h",
         leaf_window=100,
-        leaf_overlap=0,
         max_levels=4,
         umap_seed=42,
         gmm_seed=42,
@@ -314,7 +313,7 @@ def test_raptor_tree_builder_deterministic_ids_across_builds(tmp_path, monkeypat
     monkeypatch.setattr(tree_builder_mod, "cluster_embeddings", _fixed_clusters)
 
     def _build_once(tag: str):
-        cfg = RaptorBuildConfig(leaf_window=100, leaf_overlap=0, max_levels=2)
+        cfg = RaptorBuildConfig(leaf_window=100, max_levels=2)
         builder = RaptorTreeBuilder(
             build_config=cfg,
             tree_cache=TreeCache(root=str(tmp_path / f"trees_{tag}")),

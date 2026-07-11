@@ -32,8 +32,6 @@ class RaptorNode:
     token_count: int
     source_files: list[str] = field(default_factory=list)
     children: list[str] = field(default_factory=list)
-    leaf_indices: list[int] = field(default_factory=list)
-    cluster_id: int | None = None
 
     def to_chunk(self) -> Chunk:
         """Adapt to the existing `Chunk` shape so downstream scorers work.

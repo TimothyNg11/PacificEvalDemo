@@ -72,7 +72,6 @@ class SummaryCache:
 def tree_key(
     corpus_hash: str,
     leaf_window: int,
-    leaf_overlap: int,
     max_levels: int,
     umap_seed: int,
     gmm_seed: int,
@@ -84,7 +83,6 @@ def tree_key(
     parts = [
         f"corpus={corpus_hash}",
         f"leaf_window={leaf_window}",
-        f"leaf_overlap={leaf_overlap}",
         f"max_levels={max_levels}",
         f"umap_seed={umap_seed}",
         f"gmm_seed={gmm_seed}",

@@ -42,16 +42,6 @@ class RaptorIndex:
         self._all_ids = ids
         self._all_embeddings = embs / norms
 
-    def get(self, node_id: str) -> RaptorNode:
-        return self.nodes_by_id[node_id]
-
-    def children_of(self, node_id: str) -> list[RaptorNode]:
-        node = self.nodes_by_id[node_id]
-        return [self.nodes_by_id[cid] for cid in node.children if cid in self.nodes_by_id]
-
-    def leaves(self) -> list[RaptorNode]:
-        return [n for n in self.nodes_by_id.values() if n.is_leaf]
-
     def max_level(self) -> int:
         return max((n.level for n in self.nodes_by_id.values()), default=0)
 

@@ -1,9 +1,14 @@
 """RaptorRetriever: three retrieval strategies over a built RAPTOR tree.
 
-- raptor_tree: paper's top-down traversal (k children per level).
-- raptor_collapsed: flatten all nodes and do a single vector top-k search.
-- raptor_qcond: this repo's contribution — per-node descent decisions based
-  on query-node score and the entropy of query-children scores.
+- raptor_tree: the RAPTOR paper's top-down traversal mode (k children per
+  level).
+- raptor_collapsed: the paper's collapsed-tree mode — flatten all nodes and
+  do a single vector top-k search. Table 2 in Sarthi et al. (2024) reports
+  this as the paper's best-performing mode.
+- raptor_qcond: this repo's original contribution — per-node descent
+  decisions (terminate / single-branch / multi-branch) based on the
+  query-node vs. best-child score gap and the entropy of query-children
+  scores, rather than a fixed top-k-per-level traversal.
 """
 
 from __future__ import annotations
@@ -14,11 +19,16 @@ from dataclasses import dataclass
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-from ..chunkers import Chunk
-from ..config import EMBEDDING_MODEL, SearchStrategy
+from ..chunkers import Chunk, get_embedding_model
+from ..config import SearchStrategy
 from ..retrievers import RetrievalResult
 from .node import RaptorNode
 from .tree_index import RaptorIndex
+
+
+def _dedup_preserve_order(ids: list[str]) -> list[str]:
+    """Drop duplicates while keeping first-occurrence order."""
+    return list(dict.fromkeys(ids))
 
 
 @dataclass
@@ -47,7 +57,7 @@ class RaptorRetriever:
         tree_k_per_level: int = 5,
     ):
         self.index = index
-        self.embedder = embedding_model or SentenceTransformer(EMBEDDING_MODEL)
+        self.embedder = embedding_model or get_embedding_model()
         self.qcond_config = qcond_config or QCondConfig()
         self.tree_k_per_level = tree_k_per_level
 
@@ -83,6 +93,10 @@ class RaptorRetriever:
     def _retrieve_collapsed(
         self, q_emb: list[float], top_k: int
     ) -> list[tuple[RaptorNode, float]]:
+        """Flatten every node (leaf and summary) into one pool and do a
+        single vector top-k search. The paper's "collapsed tree" retrieval
+        mode — Table 2 in Sarthi et al. (2024) reports this as the
+        best-performing mode against tree traversal."""
         return self.index.collapsed_search(q_emb, top_k=top_k)
 
     def _retrieve_tree(
@@ -90,7 +104,8 @@ class RaptorRetriever:
     ) -> list[tuple[RaptorNode, float]]:
         """Top-down traversal: keep top `tree_k_per_level` at each level,
         descend into their children, union all selected nodes across levels,
-        then return top_k by score."""
+        then return top_k by score. The paper's tree-traversal retrieval
+        mode (Sarthi et al., 2024)."""
         q = self._normalize(q_emb)
         # Start at roots
         frontier_ids = list(self.index.root_ids)
@@ -112,9 +127,7 @@ class RaptorRetriever:
                 for cid in node.children:
                     if cid in self.index.nodes_by_id:
                         next_frontier.append(cid)
-            # Dedup, preserve order
-            seen: set[str] = set()
-            frontier_ids = [c for c in next_frontier if not (c in seen or seen.add(c))]
+            frontier_ids = _dedup_preserve_order(next_frontier)
 
         ranked = sorted(selected.items(), key=lambda kv: kv[1], reverse=True)[:top_k]
         return [(self.index.nodes_by_id[nid], s) for nid, s in ranked]
@@ -126,7 +139,11 @@ class RaptorRetriever:
     ) -> list[tuple[RaptorNode, float]]:
         """Per-node: terminate if node beats children; single-branch if one
         child dominates; multi-branch otherwise. Returns the nodes where the
-        descent terminated, ranked by score."""
+        descent terminated, ranked by score. This repo's original
+        contribution (not from the paper): descent policy is conditioned
+        per-node on the node-vs-best-child score gap (terminate) and on the
+        entropy of query-children scores (single- vs multi-branch), rather
+        than the paper's fixed top-k-per-level traversal."""
         q = self._normalize(q_emb)
         cfg = self.qcond_config
         terminal: dict[str, float] = {}
@@ -184,9 +201,7 @@ class RaptorRetriever:
                     advanced = True
 
             descents += 1
-            # Dedup frontier
-            seen: set[str] = set()
-            frontier_ids = [c for c in next_frontier if not (c in seen or seen.add(c))]
+            frontier_ids = _dedup_preserve_order(next_frontier)
             if not advanced:
                 break
 

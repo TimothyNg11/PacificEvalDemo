@@ -11,7 +11,6 @@ No paid APIs.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 import numpy as np
@@ -23,16 +22,16 @@ except ImportError as e:  # pragma: no cover
         "sentence-transformers required for FaithfulnessScorer"
     ) from e
 
-from .chunkers import Chunk
+from .chunkers import Chunk, split_sentences
 
 
 FAITHFULNESS_MODEL = "cross-encoder/nli-deberta-v3-base"
 # Cross-encoder NLI heads typically output [contradiction, entailment, neutral]
 # but the index ordering depends on the model. For nli-deberta-v3-base the
-# label order is ["contradiction", "entailment", "neutral"]. We pick by argmax
-# of (entailment - contradiction).
+# label order is ["contradiction", "entailment", "neutral"], so entailment is
+# column 1. The per-sentence score used below is that entailment probability
+# directly (after softmax), not a contradiction-adjusted margin.
 ENTAILMENT_IDX = 1
-CONTRADICTION_IDX = 0
 
 
 @dataclass
@@ -41,17 +40,6 @@ class FaithfulnessMetrics:
     supported_sentences: int       # count of sentences with score >= threshold
     total_sentences: int
     threshold: float = 0.5
-
-
-_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
-
-
-def _split_sentences(text: str) -> list[str]:
-    text = text.strip()
-    if not text:
-        return []
-    parts = [s.strip() for s in _SENT_SPLIT.split(text) if s.strip()]
-    return parts
 
 
 _reranker_instance = None
@@ -74,7 +62,7 @@ class FaithfulnessScorer:
     def score(
         self, generated_answer: str, retrieved_chunks: list[Chunk]
     ) -> FaithfulnessMetrics:
-        sentences = _split_sentences(generated_answer)
+        sentences = split_sentences(generated_answer)
         if not sentences:
             return FaithfulnessMetrics(
                 faithfulness=1.0, supported_sentences=0, total_sentences=0,

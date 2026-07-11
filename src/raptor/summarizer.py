@@ -1,15 +1,15 @@
 """LLM-based cluster summarization for RAPTOR.
 
-Reuses the OpenAI-compatible client setup from `AnswerGenerator`, so by default
-this hits the local Ollama server. Every summary is cached on disk keyed by
-the exact passages + model + prompt version.
+Reuses the OpenAI-compatible client bootstrap from `generator.resolve_llm_client`
+(the same helper `AnswerGenerator` uses), so by default this hits the local
+Ollama server. Every summary is cached on disk keyed by the exact passages +
+model + prompt version.
 """
 
 from __future__ import annotations
 
-from openai import OpenAI
-
-from ..config import LLMConfig, LLM_PRESETS
+from ..config import LLMConfig
+from ..generator import resolve_llm_client
 from .cache import SummaryCache, summary_key
 from .prompts import PROMPT_VERSION, SUMMARIZE_SYSTEM, build_summarize_user_prompt
 
@@ -23,13 +23,7 @@ class Summarizer:
         cache: SummaryCache | None = None,
         max_input_chars: int = 24_000,
     ):
-        if llm_config is None:
-            llm_config = LLM_PRESETS["ollama"]
-        self.llm_config = llm_config
-        self.client = OpenAI(
-            base_url=llm_config.base_url,
-            api_key=llm_config.api_key,
-        )
+        self.llm_config, self.client = resolve_llm_client(llm_config)
         self.cache = cache if cache is not None else SummaryCache()
         self.max_input_chars = max_input_chars
         self.call_count = 0

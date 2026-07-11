@@ -472,11 +472,19 @@ class BenchmarkAnalyzer:
     # ---------- RAPTOR / Pareto / ablation plots ----------
 
     @staticmethod
-    def _strategy_family(config_name: str) -> str:
+    def _is_raptor_search(search: str) -> bool:
+        """Whether a bare search-strategy value (e.g. "raptor_tree",
+        "vector") is a RAPTOR mode. Shared by `_strategy_family` and the
+        per-search-strategy plots below, so there's one place that knows
+        the "raptor_" naming convention."""
+        return search.startswith("raptor_")
+
+    @classmethod
+    def _strategy_family(cls, config_name: str) -> str:
         """Classify a config as baseline vs RAPTOR mode for plotting."""
         parts = config_name.split("__")
         search = parts[1] if len(parts) > 1 else ""
-        if search.startswith("raptor_"):
+        if cls._is_raptor_search(search):
             return search  # raptor_tree / raptor_collapsed / raptor_qcond
         return "baseline"
 
@@ -605,7 +613,7 @@ class BenchmarkAnalyzer:
         means = [sum(per_search[l]) / len(per_search[l]) for l in labels]
 
         fig, ax = plt.subplots(figsize=(10, 5))
-        colors = ["#3498db" if l.startswith("raptor_") else "#95a5a6" for l in labels]
+        colors = ["#3498db" if self._is_raptor_search(l) else "#95a5a6" for l in labels]
         ax.bar(labels, means, color=colors, alpha=0.85)
         ax.set_ylabel("Avg QASPER F1")
         ax.set_title("QASPER token-level F1 by search strategy")
@@ -633,7 +641,7 @@ class BenchmarkAnalyzer:
         means = [sum(per_search[l]) / len(per_search[l]) for l in labels]
 
         fig, ax = plt.subplots(figsize=(10, 5))
-        colors = ["#3498db" if l.startswith("raptor_") else "#95a5a6" for l in labels]
+        colors = ["#3498db" if self._is_raptor_search(l) else "#95a5a6" for l in labels]
         ax.bar(labels, means, color=colors, alpha=0.85)
         ax.set_ylabel("Avg NLI faithfulness")
         ax.set_title("Faithfulness (NLI entailment) by search strategy")

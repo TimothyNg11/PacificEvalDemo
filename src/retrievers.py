@@ -169,8 +169,11 @@ class Retriever:
 def make_retriever(index, reranker=None):
     """Return the right retriever for the index type.
 
-    - `CorpusIndex` -> `Retriever` (existing 4 strategies).
-    - `RaptorIndex` -> `RaptorRetriever` (3 RAPTOR strategies).
+    - `CorpusIndex` -> `Retriever` (existing 4 strategies). `reranker` is
+      used only by the `hybrid_rerank` strategy here.
+    - `RaptorIndex` -> `RaptorRetriever` (3 RAPTOR strategies). `reranker`
+      is accepted for a uniform call signature but ignored — none of the
+      RAPTOR modes rerank.
     """
     # Local import to avoid a circular import (raptor depends on this module
     # for `RetrievalResult`).

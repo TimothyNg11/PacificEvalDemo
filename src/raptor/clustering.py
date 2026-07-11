@@ -26,6 +26,15 @@ except ImportError as e:  # pragma: no cover
     ) from e
 
 
+# These are never varied across the codebase, so they're module-level
+# constants rather than `cluster_embeddings` parameters.
+UMAP_COMPONENTS_GLOBAL = 10
+UMAP_COMPONENTS_LOCAL = 10
+UMAP_NEIGHBORS = 15
+MAX_GLOBAL_K = 50
+MAX_LOCAL_K = 10
+
+
 def _reduce_umap(
     embeddings: np.ndarray,
     n_components: int,
@@ -102,11 +111,6 @@ def cluster_embeddings(
     embeddings: np.ndarray,
     umap_seed: int = 42,
     gmm_seed: int = 42,
-    umap_components_global: int = 10,
-    umap_components_local: int = 10,
-    umap_neighbors: int = 15,
-    max_global_k: int = 50,
-    max_local_k: int = 10,
     soft_assign_threshold: float = 0.1,
 ) -> list[list[int]]:
     """Two-stage UMAP + GMM clustering. Returns a list of clusters,
@@ -122,11 +126,11 @@ def cluster_embeddings(
     # ---- Stage 1: global ----
     global_reduced = _reduce_umap(
         embeddings,
-        n_components=umap_components_global,
-        n_neighbors=umap_neighbors,
+        n_components=UMAP_COMPONENTS_GLOBAL,
+        n_neighbors=UMAP_NEIGHBORS,
         seed=umap_seed,
     )
-    global_max_k = min(max_global_k, max(1, n // 2))
+    global_max_k = min(MAX_GLOBAL_K, max(1, n // 2))
     global_gmm = _bic_best_gmm(global_reduced, max_k=global_max_k, seed=gmm_seed)
     global_clusters = _soft_assign(global_gmm, global_reduced, soft_assign_threshold)
 
@@ -143,11 +147,11 @@ def cluster_embeddings(
             continue
         local_reduced = _reduce_umap(
             local_embs,
-            n_components=min(umap_components_local, max(2, len(gc) - 2)),
-            n_neighbors=umap_neighbors,
+            n_components=min(UMAP_COMPONENTS_LOCAL, max(2, len(gc) - 2)),
+            n_neighbors=UMAP_NEIGHBORS,
             seed=umap_seed,
         )
-        local_max_k = min(max_local_k, max(1, len(gc) // 2))
+        local_max_k = min(MAX_LOCAL_K, max(1, len(gc) // 2))
         local_gmm = _bic_best_gmm(local_reduced, max_k=local_max_k, seed=gmm_seed)
         local_subclusters = _soft_assign(local_gmm, local_reduced, soft_assign_threshold)
         # Map local indices back to global embedding indices

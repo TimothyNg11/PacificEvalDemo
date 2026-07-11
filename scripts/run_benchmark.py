@@ -36,7 +36,7 @@ def parse_config_name(name: str) -> RetrievalConfig:
 @click.option(
     "--include-raptor", is_flag=True, default=False,
     help="Include RAPTOR strategies (adds 9 configs: 1 chunking x 3 search x 3 top_k). "
-         "Requires umap-learn and a local Ollama running.",
+         "Requires umap-learn; summarization uses whichever --llm provider is selected.",
 )
 @click.option(
     "--corpus-dir", default=None,
