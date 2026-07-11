@@ -46,25 +46,48 @@ _tokenizer = tiktoken.get_encoding("cl100k_base")
 
 
 def _retrieval_row(retriever, strategy, cfg_label, questions, scorer, top_k):
-    """Mean precision/recall/tokens for one retriever setting at one k."""
+    """Mean precision/recall/tokens/nodes-scored for one setting at one k.
+
+    nodes_scored counts embedding-similarity computations per query — the
+    traversal's search effort. Collapsed search scores every node in the
+    tree by construction, so it is reported as the full node count.
+    """
     precs, recs, toks = [], [], []
-    for q in questions:
-        result = retriever.retrieve(q["question"], strategy=strategy, top_k=top_k)
-        m = scorer.score(
-            retrieved_chunks=result.chunks,
-            gold_source_ids=q["gold_source_ids"],
-            distractor_ids=q.get("distractors"),
-        )
-        precs.append(m.context_precision)
-        recs.append(m.context_recall)
-        toks.append(sum(len(_tokenizer.encode(c.text)) for c in result.chunks))
+    scored_counter = [0]
+    original_score_nodes = retriever._score_nodes
+
+    def counted_score_nodes(q, node_ids):
+        scored_counter[0] += len(node_ids)
+        return original_score_nodes(q, node_ids)
+
+    retriever._score_nodes = counted_score_nodes
+    try:
+        for q in questions:
+            result = retriever.retrieve(q["question"], strategy=strategy, top_k=top_k)
+            m = scorer.score(
+                retrieved_chunks=result.chunks,
+                gold_source_ids=q["gold_source_ids"],
+                distractor_ids=q.get("distractors"),
+            )
+            precs.append(m.context_precision)
+            recs.append(m.context_recall)
+            toks.append(sum(len(_tokenizer.encode(c.text)) for c in result.chunks))
+    finally:
+        retriever._score_nodes = original_score_nodes
+
     n = len(questions)
+    total_nodes = len(retriever.index.nodes_by_id)
+    nodes_scored = (
+        total_nodes if strategy == SearchStrategy.RAPTOR_COLLAPSED
+        else scored_counter[0] / n
+    )
     return {
         "setting": cfg_label,
         "top_k": top_k,
         "recall": sum(recs) / n,
         "precision": sum(precs) / n,
         "tokens": sum(toks) / n,
+        "nodes_scored": nodes_scored,
     }
 
 
@@ -72,18 +95,22 @@ def _retrieval_row(retriever, strategy, cfg_label, questions, scorer, top_k):
 @click.option("--summarizer", default="anthropic",
               type=click.Choice(list(LLM_PRESETS)), show_default=True,
               help="Preset whose model name keys the cached tree to load.")
+@click.option("--corpus-dir", default=CORPUS_DIR, show_default=True)
+@click.option("--eval-set", "eval_set_path", default=EVAL_SET_PATH,
+              show_default=True)
 @click.option("--out", default=os.path.join(RESULTS_DIR, "qcond_sweep.csv"),
               show_default=True)
-def main(summarizer, out):
-    """Sweep qcond hyperparameters on the synthetic eval set (no LLM calls)."""
-    with open(EVAL_SET_PATH, "r", encoding="utf-8") as f:
+def main(summarizer, corpus_dir, eval_set_path, out):
+    """Sweep qcond hyperparameters with retrieval-only scoring (no LLM calls
+    when the tree for --corpus-dir is already cached)."""
+    with open(eval_set_path, "r", encoding="utf-8") as f:
         questions = yaml.safe_load(f)
 
     print("Loading cached RAPTOR tree (no LLM calls expected)...")
     builder = RaptorTreeBuilder(
         build_config=RaptorBuildConfig(), llm_config=LLM_PRESETS[summarizer]
     )
-    index = builder.build(CORPUS_DIR)
+    index = builder.build(corpus_dir)
     scorer = RetrievalScorer()
 
     rows = []
