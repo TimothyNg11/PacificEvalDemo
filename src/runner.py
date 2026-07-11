@@ -119,6 +119,12 @@ class BenchmarkRunner:
         all_results = []
         total_configs = len(configs)
 
+        # Checkpoint each result as it is produced so a crash or kill
+        # partway through a long (LLM-billed) run doesn't lose everything.
+        output_path = results_path(self.results_suffix)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        checkpoint = open(output_path, "w", encoding="utf-8")
+
         for config_idx, config in enumerate(configs, 1):
             print(f"\n[{config_idx}/{total_configs}] Running config: {config.name}")
 
@@ -211,6 +217,8 @@ class BenchmarkRunner:
                 )
 
                 all_results.append(result)
+                checkpoint.write(json.dumps(asdict(result)) + "\n")
+                checkpoint.flush()
 
                 print(
                     f"  [{config.name}] Question {q_idx}/{len(self.eval_set)} "
@@ -219,10 +227,9 @@ class BenchmarkRunner:
                     f"fact_recall={key_fact_metrics.fact_recall:.2f}"
                 )
 
-        # Save results
+        # Results were checkpointed row-by-row during the run.
+        checkpoint.close()
         suffix = f"_{self.results_suffix}" if self.results_suffix else ""
-        output_path = results_path(self.results_suffix)
-        save_results(all_results, output_path)
 
         # Write a results manifest (reproducibility infra)
         try:
