@@ -1,7 +1,7 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-results/
+/results/
 data/chroma_indexes/
 data/raptor_cache/
 data/corpus_qasper/
