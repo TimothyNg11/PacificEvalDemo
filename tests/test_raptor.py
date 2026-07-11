@@ -118,6 +118,18 @@ def test_clustering_separates_obvious_groups():
     assert len(clusters) >= 3, f"expected at least 3 clusters, got {len(clusters)}"
 
 
+@pytest.mark.skipif(not _has_umap(), reason="umap-learn not installed")
+@pytest.mark.parametrize("n", [1, 3, 4])
+def test_clustering_tiny_inputs_single_cluster(n):
+    """Regression: n=3 crashed UMAP's spectral init (eigsh k >= N) at high
+    tree levels on real corpora; tiny inputs must return one cluster."""
+    from src.raptor.clustering import cluster_embeddings  # deferred import
+    rng = np.random.default_rng(0)
+    embs = rng.normal(size=(n, 8)).astype(np.float32)
+    clusters = cluster_embeddings(embs, umap_seed=0, gmm_seed=0)
+    assert clusters == [list(range(n))]
+
+
 def test_raptor_index_collapsed_search():
     n_leaf = RaptorNode(
         node_id="l1",

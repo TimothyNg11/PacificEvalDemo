@@ -120,7 +120,10 @@ def cluster_embeddings(
     `soft_assign_threshold`).
     """
     n = len(embeddings)
-    if n <= 2:
+    # Below ~5 points there is nothing to subdivide, and UMAP's spectral
+    # initialization requires n_components + 1 < n (eigsh k >= N raises for
+    # n=3 even with n_components clamped to its minimum of 2).
+    if n < 5:
         return [list(range(n))]
 
     # ---- Stage 1: global ----
