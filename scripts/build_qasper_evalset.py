@@ -181,7 +181,13 @@ def main(n_papers, questions_per_paper, seed, corpus_out, eval_out, split):
 
     random.seed(seed)
     click.echo(f"Loading QASPER (split={split}) from Hugging Face...")
-    ds = load_dataset("allenai/qasper", split=split)
+    # allenai/qasper is a script-based dataset, unsupported by datasets>=4;
+    # load the Hub's auto-converted parquet branch instead.
+    ds = load_dataset(
+        "parquet",
+        data_files=f"hf://datasets/allenai/qasper@refs/convert/parquet/qasper/{split}/*.parquet",
+        split="train",
+    )
     click.echo(f"  {len(ds)} papers in split.")
 
     # ---- Subsample papers stratified by available answer types ----
