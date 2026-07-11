@@ -44,8 +44,12 @@ termination mechanisms inactive). v1 used `k_branch=2`.
 
 qcond v2 improves on v1 across every metric at every k on both corpora, and the
 calibration transferred to the held-out set. Against the paper's best mode it
-reaches **parity, not superiority**: statistically level with collapsed at k3
-and k10, slightly ahead at k5, at a marginally lower token budget. The original
+reaches **parity, not superiority** on QASPER — confirmed by a paired
+per-question analysis ([per_query_analysis.md](per_query_analysis.md)): the
+95% CI on the mean F1 delta is [−0.004, +0.005] with balanced win/loss counts.
+On the short-document synthetic corpus, collapsed remains significantly better
+at the answer level (paired CIs exclude zero) despite equal retrieval recall —
+parity is a long-document result, not a general one. The original
 premise — that per-query adaptive traversal beats a flat collapsed search — is
 not supported at matched budgets; the honest conclusion is that collapsed search
 is hard to beat and qcond's value is now matching it while retaining a
