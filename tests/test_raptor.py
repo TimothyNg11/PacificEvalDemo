@@ -265,6 +265,189 @@ def test_raptor_retriever_qcond_handles_dangling_children():
     assert result.chunks[0].source_file == "a.md"
 
 
+# ---------- qcond v2: tau_level_scale / leaf_bias / expand_terminal_leaves ----------
+
+
+def test_qcond_v2_defaults_match_v1_behavior():
+    """Explicitly passing the v2-reproducing defaults (tau_level_scale=0.0,
+    leaf_bias=0.0, expand_terminal_leaves=False) must return identical
+    (node_id, score) results to the implicit v1 defaults."""
+    index = _toy_tree()
+    q_emb = [1.0, 0.0, 0.0, 0.0]
+
+    retriever_v1 = RaptorRetriever(index, embedding_model=_FakeEmbedder())
+    result_v1 = retriever_v1._retrieve_qcond(q_emb, top_k=4)
+
+    retriever_v2_defaults = RaptorRetriever(
+        index, embedding_model=_FakeEmbedder(),
+        qcond_config=QCondConfig(
+            tau_level_scale=0.0, leaf_bias=0.0, expand_terminal_leaves=False,
+        ),
+    )
+    result_v2 = retriever_v2_defaults._retrieve_qcond(q_emb, top_k=4)
+
+    assert [(n.node_id, s) for n, s in result_v1] == [(n.node_id, s) for n, s in result_v2]
+
+
+def test_qcond_tau_level_scale_lets_v2_descend_where_v1_terminates():
+    """A level-2 node's gap over its best child exceeds tau_term but not
+    tau_term + tau_level_scale * level: v1 terminates there, v2 descends
+    past it instead."""
+    index = _toy_tree()  # root is level=2
+    q_emb = [1.0, 1.0, 1.0, 1.0]  # aligned exactly with root
+
+    retriever_v1 = RaptorRetriever(
+        index, embedding_model=_FakeEmbedder(),
+        qcond_config=QCondConfig(tau_term=0.2),
+    )
+    result_v1 = retriever_v1._retrieve_qcond(q_emb, top_k=4)
+    assert [n.node_id for n, _ in result_v1] == ["root"], (
+        "v1 should terminate immediately at root (gap ~0.29 > tau_term 0.2)"
+    )
+
+    retriever_v2 = RaptorRetriever(
+        index, embedding_model=_FakeEmbedder(),
+        qcond_config=QCondConfig(tau_term=0.2, tau_level_scale=0.1),
+    )
+    result_v2 = retriever_v2._retrieve_qcond(q_emb, top_k=4)
+    result_ids_v2 = {n.node_id for n, _ in result_v2}
+    assert "root" not in result_ids_v2, (
+        "v2 should descend past root (tau_eff = 0.2 + 0.1*2 = 0.4 > gap ~0.29)"
+    )
+
+
+def test_qcond_leaf_bias_flips_marginal_terminate_to_descend():
+    """A gap just above tau_term normally terminates. leaf_bias discounts
+    node_score by leaf_bias * node.level for the terminate DECISION only,
+    closing a small enough gap so v2 descends instead — without changing
+    the score actually stored for ranking."""
+    leaves = [
+        RaptorNode(node_id="l_close", text="close", embedding=[0.9, 0.4358898943540674],
+                   level=0, token_count=1, source_files=["a.md"]),
+        RaptorNode(node_id="l_far", text="far", embedding=[0.0, 1.0],
+                   level=0, token_count=1, source_files=["b.md"]),
+    ]
+    parent = RaptorNode(
+        node_id="p", text="parent", embedding=[1.0, 0.0], level=1,
+        token_count=1, source_files=["a.md", "b.md"],
+        children=["l_close", "l_far"],
+    )
+    nodes = {n.node_id: n for n in [*leaves, parent]}
+    index = RaptorIndex(nodes_by_id=nodes, root_ids=["p"], tree_hash="t")
+    q_emb = [1.0, 0.0]  # aligned with parent; gap over best child (~0.9) is ~0.1
+
+    retriever_v1 = RaptorRetriever(
+        index, embedding_model=_FakeEmbedder(),
+        qcond_config=QCondConfig(tau_term=0.09),
+    )
+    result_v1 = retriever_v1._retrieve_qcond(q_emb, top_k=3)
+    assert [n.node_id for n, _ in result_v1] == ["p"], "v1 should terminate at parent (gap ~0.1 > 0.09)"
+    assert abs(result_v1[0][1] - 1.0) < 1e-5
+
+    retriever_v2 = RaptorRetriever(
+        index, embedding_model=_FakeEmbedder(),
+        qcond_config=QCondConfig(tau_term=0.09, leaf_bias=0.02),
+    )
+    result_v2 = retriever_v2._retrieve_qcond(q_emb, top_k=3)
+    assert "p" not in {n.node_id for n, _ in result_v2}, (
+        "leaf_bias=0.02 should close the ~0.1 gap to ~0.08 (<= tau_term), so v2 descends"
+    )
+
+    # A smaller leaf_bias that still terminates must store the RAW
+    # node_score, not the biased one used only for the decision.
+    retriever_v2_still_terminates = RaptorRetriever(
+        index, embedding_model=_FakeEmbedder(),
+        qcond_config=QCondConfig(tau_term=0.09, leaf_bias=0.005),
+    )
+    result_v2b = retriever_v2_still_terminates._retrieve_qcond(q_emb, top_k=3)
+    assert len(result_v2b) == 1 and result_v2b[0][0].node_id == "p"
+    assert abs(result_v2b[0][1] - 1.0) < 1e-5, "stored score must be raw node_score, not score - bias*level"
+
+
+def test_qcond_expand_terminal_leaves_returns_leaves_not_summary_node():
+    """When descent terminates at a non-leaf node, expand_terminal_leaves
+    must return that node's descendant leaves, never the summary node
+    itself — and top_k is still respected against the expanded pool."""
+    index = _toy_tree()
+    q_emb = [1.0, 1.0, 1.0, 1.0]  # aligned with root -> terminates at root immediately
+
+    retriever = RaptorRetriever(
+        index, embedding_model=_FakeEmbedder(),
+        qcond_config=QCondConfig(expand_terminal_leaves=True),
+    )
+    result = retriever._retrieve_qcond(q_emb, top_k=10)
+    result_ids = {n.node_id for n, _ in result}
+
+    assert "root" not in result_ids
+    assert result_ids == {"l0", "l1", "l2", "l3"}
+    for node, _ in result:
+        assert node.is_leaf
+
+    # top_k bound respected with expansion on.
+    bounded = retriever._retrieve_qcond(q_emb, top_k=2)
+    assert len(bounded) <= 2
+
+
+def test_qcond_expand_terminal_leaves_returns_leaf_terminal_as_itself():
+    """A terminal that is already a leaf is returned as itself, regardless
+    of expand_terminal_leaves — there's nothing below it to expand into."""
+    leaf = RaptorNode(
+        node_id="only_leaf", text="leaf", embedding=[1.0, 0.0], level=0,
+        token_count=1, source_files=["a.md"],
+    )
+    index = RaptorIndex(nodes_by_id={"only_leaf": leaf}, root_ids=["only_leaf"], tree_hash="t")
+    retriever = RaptorRetriever(
+        index, embedding_model=_FakeEmbedder(),
+        qcond_config=QCondConfig(expand_terminal_leaves=True),
+    )
+    result = retriever._retrieve_qcond([1.0, 0.0], top_k=3)
+    assert [n.node_id for n, _ in result] == ["only_leaf"]
+
+
+def test_qcond_expand_terminal_leaves_dedups_shared_descendant_leaf():
+    """Soft clustering can put the same leaf under two different summary
+    nodes. If both terminate in the same call, the shared leaf must appear
+    once in the pooled results (memoized visited set), not twice."""
+    shared_leaf = RaptorNode(
+        node_id="shared", text="shared leaf", embedding=[0.9, 0.4358898943540674],
+        level=0, token_count=1, source_files=["shared.md"],
+    )
+    a_leaf = RaptorNode(
+        node_id="a_only", text="a leaf", embedding=[0.0, 1.0], level=0,
+        token_count=1, source_files=["a.md"],
+    )
+    b_leaf = RaptorNode(
+        node_id="b_only", text="b leaf", embedding=[0.0, 1.0], level=0,
+        token_count=1, source_files=["b.md"],
+    )
+    summary_a = RaptorNode(
+        node_id="summary_a", text="summary a", embedding=[1.0, 0.0], level=1,
+        token_count=1, source_files=["shared.md", "a.md"],
+        children=["shared", "a_only"],
+    )
+    summary_b = RaptorNode(
+        node_id="summary_b", text="summary b", embedding=[1.0, 0.0], level=1,
+        token_count=1, source_files=["shared.md", "b.md"],
+        children=["shared", "b_only"],
+    )
+    nodes = {n.node_id: n for n in [shared_leaf, a_leaf, b_leaf, summary_a, summary_b]}
+    index = RaptorIndex(nodes_by_id=nodes, root_ids=["summary_a", "summary_b"], tree_hash="t")
+
+    retriever = RaptorRetriever(
+        index, embedding_model=_FakeEmbedder(),
+        # Both summaries point straight at the query; their non-shared
+        # children point orthogonally, so the gap (~0.1) comfortably
+        # exceeds tau_term and both terminate on the first pass.
+        qcond_config=QCondConfig(tau_term=0.05, expand_terminal_leaves=True),
+    )
+    result = retriever._retrieve_qcond([1.0, 0.0], top_k=10)
+    result_ids = [n.node_id for n, _ in result]
+
+    assert result_ids.count("shared") == 1
+    assert set(result_ids) == {"shared", "a_only", "b_only"}
+    assert "summary_a" not in result_ids and "summary_b" not in result_ids
+
+
 class _FakeEmbedder:
     """Deterministic stand-in for SentenceTransformer.encode."""
 

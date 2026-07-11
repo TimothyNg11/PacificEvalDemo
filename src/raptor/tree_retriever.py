@@ -33,17 +33,44 @@ def _dedup_preserve_order(ids: list[str]) -> list[str]:
 
 @dataclass
 class QCondConfig:
-    """Hyperparameters for query-conditional traversal."""
+    """Hyperparameters for query-conditional traversal.
+
+    `tau_level_scale`, `leaf_bias`, and `expand_terminal_leaves` are the
+    three candidate fixes for qcond's early-termination-at-abstract-nodes
+    problem (early v1 evaluation showed low context recall vs. collapsed
+    search). All default to their v1-reproducing value (0.0 / 0.0 / False)
+    so they're opt-in.
+    """
     # Terminate at node when node_score - max(child_score) > tau_term.
     tau_term: float = 0.05
     # Single-branch descend when entropy(softmax(child_scores)) < tau_focus.
     tau_focus: float = 0.6
-    # When multi-branching, retain top-k children.
-    k_branch: int = 2
+    # When multi-branching, retain top-k children. Calibrated on the
+    # synthetic eval set via scripts/sweep_qcond.py (v2): v1's k_branch=2
+    # beam explored <=8 of ~150 leaves, exhausting the candidate pool
+    # (3-8 candidates at top_k=10) and capping recall regardless of
+    # termination tuning; k_branch=5 matches collapsed-search recall at
+    # ~70% of its token budget. v1 used k_branch=2.
+    k_branch: int = 5
     # Maximum number of descents per query.
     max_descents: int = 5
     # Temperature for softmax over child scores.
     softmax_temp: float = 0.1
+    # Widens the terminate gap required at deeper (more abstract) levels:
+    # effective threshold = tau_term + tau_level_scale * node.level. Leaves
+    # are level 0, so this only affects internal nodes. 0.0 reproduces the
+    # original level-independent tau_term.
+    tau_level_scale: float = 0.0
+    # Discounts node_score by leaf_bias * node.level in the terminate
+    # DECISION only — the score stored for ranking is always the raw,
+    # unbiased node_score. Makes it harder for an abstract node to
+    # out-score its children just by sitting close to the query in
+    # embedding space. 0.0 leaves the decision unbiased.
+    leaf_bias: float = 0.0
+    # When descent terminates at a non-leaf node, expand it to its
+    # descendant leaves (each freshly scored against the query) instead of
+    # returning the summary node itself. False reproduces v1 exactly.
+    expand_terminal_leaves: bool = False
 
 
 class RaptorRetriever:
@@ -143,12 +170,45 @@ class RaptorRetriever:
         contribution (not from the paper): descent policy is conditioned
         per-node on the node-vs-best-child score gap (terminate) and on the
         entropy of query-children scores (single- vs multi-branch), rather
-        than the paper's fixed top-k-per-level traversal."""
+        than the paper's fixed top-k-per-level traversal.
+
+        `QCondConfig.tau_level_scale`/`leaf_bias` make the terminate
+        decision "adaptive scoping" — harder to stop at an abstract node
+        the deeper it sits — and `expand_terminal_leaves` adds
+        "leaf-precise retrieval within scope": once a scope (subtree) is
+        chosen by termination, rank its individual leaves against the
+        query instead of returning the summary node as one opaque unit.
+        All three default to their v1-reproducing values.
+        """
         q = self._normalize(q_emb)
         cfg = self.qcond_config
-        terminal: dict[str, float] = {}
+        pool: dict[str, float] = {}
+        # Leaves already expanded into `pool`, shared across every
+        # termination this call so a leaf reachable from two terminated
+        # nodes (soft clustering gives leaves multiple parents) is only
+        # scored and pooled once.
+        visited_leaves: set[str] = set()
         frontier_ids = list(self.index.root_ids)
         descents = 0
+
+        def terminate(node: RaptorNode, score: float) -> None:
+            """Record a termination at `node`, scored at `score`.
+
+            With `expand_terminal_leaves` off, or `node` already a leaf,
+            pools `node` itself. Otherwise pools `node`'s descendant leaves
+            instead, each freshly scored against the query.
+            """
+            if not cfg.expand_terminal_leaves or node.is_leaf:
+                pool[node.node_id] = max(pool.get(node.node_id, -np.inf), score)
+                return
+            leaf_ids = self._collect_descendant_leaves(node, visited_leaves)
+            if not leaf_ids:
+                # Nothing resolvable below this node — fall back to it so
+                # the scope isn't silently dropped from the results.
+                pool[node.node_id] = max(pool.get(node.node_id, -np.inf), score)
+                return
+            for leaf, leaf_score in self._score_nodes(q, leaf_ids):
+                pool[leaf.node_id] = max(pool.get(leaf.node_id, -np.inf), leaf_score)
 
         while frontier_ids and descents < cfg.max_descents:
             next_frontier: list[str] = []
@@ -162,9 +222,7 @@ class RaptorRetriever:
                     # No children, or every child id is unresolved (e.g. a
                     # dangling reference from a partial/stale build) — treat
                     # this node as terminal instead of scoring an empty set.
-                    terminal[node.node_id] = max(
-                        terminal.get(node.node_id, -np.inf), node_score
-                    )
+                    terminate(node, node_score)
                     continue
                 child_scored = self._score_nodes(q, resolved_children)
                 child_scores = np.array(
@@ -172,11 +230,15 @@ class RaptorRetriever:
                 )
                 max_child = float(child_scores.max())
 
-                # Terminate at this node
-                if node_score - max_child > cfg.tau_term:
-                    terminal[node.node_id] = max(
-                        terminal.get(node.node_id, -np.inf), node_score
-                    )
+                # Terminate at this node. tau_level_scale widens the
+                # required gap at deeper (more abstract) levels; leaf_bias
+                # additionally discounts node_score by level for this
+                # comparison only — the score passed to terminate() below
+                # is always the raw, unbiased node_score.
+                tau_eff = cfg.tau_term + cfg.tau_level_scale * node.level
+                biased_score = node_score - cfg.leaf_bias * node.level
+                if biased_score - max_child > tau_eff:
+                    terminate(node, node_score)
                     continue
 
                 # Entropy over children
@@ -208,12 +270,37 @@ class RaptorRetriever:
         # Any unterminated frontier nodes terminate now
         if frontier_ids:
             for node, score in self._score_nodes(q, frontier_ids):
-                terminal[node.node_id] = max(
-                    terminal.get(node.node_id, -np.inf), score
-                )
+                terminate(node, score)
 
-        ranked = sorted(terminal.items(), key=lambda kv: kv[1], reverse=True)[:top_k]
+        ranked = sorted(pool.items(), key=lambda kv: kv[1], reverse=True)[:top_k]
         return [(self.index.nodes_by_id[nid], s) for nid, s in ranked]
+
+    def _collect_descendant_leaves(
+        self, node: RaptorNode, visited: set[str]
+    ) -> list[str]:
+        """Iterative DFS to `node`'s descendant leaves (level 0), skipping
+        unresolved child ids and anything already in `visited` (marked as
+        we go, so overlapping subtrees — from soft clustering — don't get
+        walked or scored twice)."""
+        if node.node_id in visited:
+            return []
+        leaves: list[str] = []
+        stack = [node.node_id]
+        while stack:
+            nid = stack.pop()
+            if nid in visited:
+                continue
+            visited.add(nid)
+            n = self.index.nodes_by_id.get(nid)
+            if n is None:
+                continue
+            if n.is_leaf:
+                leaves.append(nid)
+                continue
+            for cid in n.children:
+                if cid in self.index.nodes_by_id and cid not in visited:
+                    stack.append(cid)
+        return leaves
 
     # ---------- helpers ----------
 
