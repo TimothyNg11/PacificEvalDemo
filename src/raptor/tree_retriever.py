@@ -45,8 +45,13 @@ class QCondConfig:
     tau_term: float = 0.05
     # Single-branch descend when entropy(softmax(child_scores)) < tau_focus.
     tau_focus: float = 0.6
-    # When multi-branching, retain top-k children.
-    k_branch: int = 2
+    # When multi-branching, retain top-k children. Calibrated on the
+    # synthetic eval set via scripts/sweep_qcond.py (v2): v1's k_branch=2
+    # beam explored <=8 of ~150 leaves, exhausting the candidate pool
+    # (3-8 candidates at top_k=10) and capping recall regardless of
+    # termination tuning; k_branch=5 matches collapsed-search recall at
+    # ~70% of its token budget. v1 used k_branch=2.
+    k_branch: int = 5
     # Maximum number of descents per query.
     max_descents: int = 5
     # Temperature for softmax over child scores.
