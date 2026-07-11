@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.config import (
     RetrievalConfig,
-    CORPUS_DIR, EVAL_SET_PATH, LLMConfig, LLM_PRESETS,
+    CORPUS_DIR, EVAL_SET_PATH, LLMConfig, LLM_PRESETS, detect_llm_provider,
 )
 from src.indexer import IndexBuilder
 from src.generator import AnswerGenerator
@@ -30,8 +30,9 @@ def parse_config_name(name: str) -> RetrievalConfig:
 @click.argument("config_name")
 @click.argument("question_id")
 @click.option(
-    "--llm", default="auto", type=click.Choice(["auto", "ollama", "openai"]),
-    help='LLM provider: "auto" (OpenAI if OPENAI_API_KEY is set, else Ollama), "ollama", or "openai"',
+    "--llm", default="auto", type=click.Choice(["auto", "ollama", "openai", "anthropic"]),
+    help='LLM provider: "auto" (Anthropic if ANTHROPIC_API_KEY is set, elif '
+         'OpenAI if OPENAI_API_KEY is set, else Ollama), "ollama", "openai", or "anthropic"',
 )
 def main(config_name, question_id, llm):
     """Debug a single config on a single question.
@@ -97,10 +98,11 @@ def main(config_name, question_id, llm):
     # Generate answer
     print("\n\nGenerating answer...")
     if llm == "auto":
-        llm = "openai" if os.environ.get("OPENAI_API_KEY") else "ollama"
+        llm = detect_llm_provider()
     llm_config = LLM_PRESETS[llm]
-    if llm == "openai" and not llm_config.api_key:
-        click.echo("Error: OPENAI_API_KEY environment variable is not set.", err=True)
+    if llm in ("openai", "anthropic") and not llm_config.api_key:
+        env_var = "OPENAI_API_KEY" if llm == "openai" else "ANTHROPIC_API_KEY"
+        click.echo(f"Error: {env_var} environment variable is not set.", err=True)
         sys.exit(1)
     print(f"Using LLM: {llm} ({llm_config.model} @ {llm_config.base_url})")
     generator = AnswerGenerator(llm_config=llm_config)

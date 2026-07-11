@@ -6,6 +6,38 @@ from enum import Enum
 from itertools import product
 
 
+def _load_dotenv(env_path: str | None = None) -> None:
+    """Tiny stdlib .env loader — no python-dotenv dependency.
+
+    Reads a `.env` file (repo root by default; overridable for tests): lines
+    of `KEY=VALUE`, one per line. Blank lines and lines starting with `#`
+    are skipped; surrounding whitespace and a single matching pair of
+    quotes around the value are stripped. Uses `setdefault` so real
+    environment variables (e.g. set by the shell or CI) always win, and
+    re-importing this module — or re-calling this function — is idempotent.
+    """
+    if env_path is None:
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env_path = os.path.join(repo_root, ".env")
+    if not os.path.isfile(env_path):
+        return
+    with open(env_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                value = value[1:-1]
+            if key:
+                os.environ.setdefault(key, value)
+
+
+_load_dotenv()
+
+
 class ChunkingStrategy(Enum):
     FIXED_256 = "fixed_256"
     FIXED_512 = "fixed_512"
@@ -139,9 +171,16 @@ class LLMConfig:
     base_url: str = LLM_BASE_URL
     model: str = LLM_MODEL
     api_key: str = LLM_API_KEY
+    # Explicit provider id ("ollama" / "openai" / "anthropic"). When set,
+    # `provider_name` returns it directly; when None, falls back to the
+    # original base_url-sniffing heuristic for back-compat with any
+    # hand-built LLMConfig that predates this field.
+    provider: str | None = None
 
     @property
     def provider_name(self) -> str:
+        if self.provider is not None:
+            return self.provider
         if "openai.com" in self.base_url:
             return "openai"
         return "ollama"
@@ -153,10 +192,33 @@ LLM_PRESETS = {
         base_url="http://localhost:11434/v1",
         model="llama3.2:3b",
         api_key="not-needed",
+        provider="ollama",
     ),
     "openai": LLMConfig(
         base_url="https://api.openai.com/v1",
         model="gpt-4o-mini",
         api_key=os.environ.get("OPENAI_API_KEY", ""),
+        provider="openai",
+    ),
+    "anthropic": LLMConfig(
+        base_url="https://api.anthropic.com",
+        model="claude-haiku-4-5",
+        api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
+        provider="anthropic",
     ),
 }
+
+
+def detect_llm_provider() -> str:
+    """Auto-detect which LLM provider `--llm auto` should resolve to, based
+    on which API key environment variables are set.
+
+    Order: Anthropic > OpenAI > Ollama (local, no key needed). Shared by
+    run_benchmark.py, run_quick.py, and run_single.py so the "auto" logic
+    lives in exactly one place.
+    """
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    if os.environ.get("OPENAI_API_KEY"):
+        return "openai"
+    return "ollama"

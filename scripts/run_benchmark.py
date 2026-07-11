@@ -8,7 +8,7 @@ import click
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.config import RetrievalConfig, generate_all_configs, LLMConfig, LLM_PRESETS
+from src.config import RetrievalConfig, generate_all_configs, LLMConfig, LLM_PRESETS, detect_llm_provider
 from src.runner import BenchmarkRunner, results_path
 
 
@@ -30,8 +30,9 @@ def parse_config_name(name: str) -> RetrievalConfig:
     help='Comma-separated question IDs, or "all"',
 )
 @click.option(
-    "--llm", default="auto", type=click.Choice(["auto", "ollama", "openai"]),
-    help='LLM provider: "auto" (OpenAI if OPENAI_API_KEY is set, else Ollama), "ollama", or "openai"',
+    "--llm", default="auto", type=click.Choice(["auto", "ollama", "openai", "anthropic"]),
+    help='LLM provider: "auto" (Anthropic if ANTHROPIC_API_KEY is set, elif '
+         'OpenAI if OPENAI_API_KEY is set, else Ollama), "ollama", "openai", or "anthropic"',
 )
 @click.option(
     "--include-raptor", is_flag=True, default=False,
@@ -72,10 +73,11 @@ def main(configs, questions, llm, include_raptor, corpus_dir, eval_set_path,
 
     # Resolve LLM config
     if llm == "auto":
-        llm = "openai" if os.environ.get("OPENAI_API_KEY") else "ollama"
+        llm = detect_llm_provider()
     llm_config = LLM_PRESETS[llm]
-    if llm == "openai" and not llm_config.api_key:
-        click.echo("Error: OPENAI_API_KEY environment variable is not set.", err=True)
+    if llm in ("openai", "anthropic") and not llm_config.api_key:
+        env_var = "OPENAI_API_KEY" if llm == "openai" else "ANTHROPIC_API_KEY"
+        click.echo(f"Error: {env_var} environment variable is not set.", err=True)
         sys.exit(1)
     print(f"Using LLM: {llm} ({llm_config.model} @ {llm_config.base_url})")
     print(f"Running {len(config_list)} configurations (include_raptor={include_raptor})...")

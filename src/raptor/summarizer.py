@@ -1,9 +1,11 @@
 """LLM-based cluster summarization for RAPTOR.
 
-Reuses the OpenAI-compatible client bootstrap from `generator.resolve_llm_client`
-(the same helper `AnswerGenerator` uses), so by default this hits the local
-Ollama server. Every summary is cached on disk keyed by the exact passages +
-model + prompt version.
+Reuses the client bootstrap from `generator.resolve_llm_client` (the same
+helper `AnswerGenerator` uses), so this works on any configured provider —
+Ollama, OpenAI, or Anthropic — by default hitting the local Ollama server.
+Every summary is cached on disk keyed by the exact passages + model +
+prompt version (model string alone is enough to distinguish providers
+since presets use distinct model names).
 """
 
 from __future__ import annotations
@@ -42,16 +44,13 @@ class Summarizer:
             return cached
 
         user_prompt = build_summarize_user_prompt(truncated)
-        response = self.client.chat.completions.create(
-            model=self.llm_config.model,
-            messages=[
-                {"role": "system", "content": SUMMARIZE_SYSTEM},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.0,
+        # SUMMARIZE_SYSTEM asks for ~250 tokens; 512 leaves headroom so the
+        # model isn't cut off mid-sentence right at its own target length.
+        raw_summary = self.client.chat(
+            system=SUMMARIZE_SYSTEM, user=user_prompt, max_tokens=512, temperature=0.0,
         )
         self.call_count += 1
-        summary = (response.choices[0].message.content or "").strip()
+        summary = raw_summary.strip()
         self.cache.put(key, summary)
         return summary
 
