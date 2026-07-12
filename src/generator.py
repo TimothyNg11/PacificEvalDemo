@@ -30,10 +30,11 @@ class GenerationResult:
 _tokenizer = tiktoken.get_encoding("cl100k_base")
 
 # Transient-failure retries around each chat call, on top of the SDKs' own
-# internal retries. Long unattended runs (a tree build makes hundreds of
-# sequential calls over ~an hour) must survive a network blip that outlasts
-# the SDK's ~2 quick retries: back off 10s/20s/40s before giving up.
-_RETRY_ATTEMPTS = 4
+# internal retries. Long unattended runs (a tree build or benchmark makes
+# thousands of sequential calls over hours) must survive network outages
+# that outlast the SDK's ~2 quick retries: back off 10/20/40/80/160s
+# (~5 minutes of tolerance) before giving up.
+_RETRY_ATTEMPTS = 6
 _RETRY_BASE_SLEEP_S = 10.0
 
 
