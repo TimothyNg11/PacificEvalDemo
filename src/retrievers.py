@@ -166,14 +166,16 @@ class Retriever:
         return None
 
 
-def make_retriever(index, reranker=None):
+def make_retriever(index, reranker=None, qcond_config=None):
     """Return the right retriever for the index type.
 
     - `CorpusIndex` -> `Retriever` (existing 4 strategies). `reranker` is
       used only by the `hybrid_rerank` strategy here.
     - `RaptorIndex` -> `RaptorRetriever` (3 RAPTOR strategies). `reranker`
       is accepted for a uniform call signature but ignored — none of the
-      RAPTOR modes rerank.
+      RAPTOR modes rerank. `qcond_config` (a `QCondConfig`, optional) lets
+      benchmark runs use a dev-calibrated qcond setting instead of the
+      defaults; it is ignored for flat indexes.
     """
     # Local import to avoid a circular import (raptor depends on this module
     # for `RetrievalResult`).
@@ -181,5 +183,5 @@ def make_retriever(index, reranker=None):
     from .raptor.tree_retriever import RaptorRetriever
 
     if isinstance(index, RaptorIndex):
-        return RaptorRetriever(index)
+        return RaptorRetriever(index, qcond_config=qcond_config)
     return Retriever(index, reranker=reranker)
