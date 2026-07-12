@@ -111,3 +111,31 @@ def test_answer_generator_uses_anthropic_chat_path(monkeypatch):
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+def test_anthropic_chat_retries_transient_connection_errors(monkeypatch):
+    """A network blip that outlasts the SDK's internal retries must not kill
+    a long run: the chat wrapper retries with backoff before giving up."""
+    import httpx
+    import anthropic
+    from src import generator
+    from src.generator import _AnthropicChat
+
+    monkeypatch.setattr(generator.time, "sleep", lambda s: None)
+
+    calls = {"n": 0}
+
+    class _FlakyMessages:
+        def create(self, **kwargs):
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                raise anthropic.APIConnectionError(
+                    request=httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+                )
+            block = type("Block", (), {"type": "text", "text": "recovered"})()
+            return type("Resp", (), {"content": [block]})()
+
+    client = type("Client", (), {"messages": _FlakyMessages()})()
+    chat = _AnthropicChat("claude-haiku-4-5", client)
+    assert chat.chat("sys", "user", max_tokens=64) == "recovered"
+    assert calls["n"] == 3
