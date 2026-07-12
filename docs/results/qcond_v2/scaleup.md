@@ -52,10 +52,15 @@ candidate pool was small enough for a widened beam to cover most of it.
 
 From the instrumented dev sweep: qcond scores **~3,700 of 13,787 nodes per
 query (27%)** for 87% of collapsed's recall (0.380 vs 0.437). Collapsed
-scores every node by construction. If per-node scoring cost mattered (very
-large trees, expensive scorers), qcond's adaptive scoping is a defensible
-trade — but for embedding dot-products at this scale, a flat matrix multiply
-is effectively free, so this is a latent advantage, not a realized one.
+scores every node by construction. For embedding dot-products this saving is
+free anyway (one matrix multiply), so it buys nothing *in this benchmark* —
+but per-node scoring is not always cheap: cross-encoder rerankers are
+standard in production RAG, and agentic systems score candidates with LLM
+calls. In those regimes a 73% reduction in scorer invocations for a ~7%
+relative quality cost is a real trade, with qcond acting as the scoping
+stage in front of the expensive scorer. Untested here (and the natural
+follow-up): whether that beats the production-standard ANN-shortlist +
+rerank pipeline at matched quality.
 
 Also notable for RAPTOR overall: collapsed@k10 matches or beats the flat
 baselines here while using **2.3–4.7× fewer context tokens** — the
