@@ -59,9 +59,20 @@ def parse_config_name(name: str) -> RetrievalConfig:
     "--qasper-f1", is_flag=True, default=False,
     help="Also compute QASPER token-level F1/EM (only meaningful on QASPER eval sets).",
 )
+@click.option(
+    "--qcond-config", "qcond_config_json", default=None,
+    help='JSON overrides for QCondConfig, e.g. \'{"tau_focus": 0.85}\' — '
+         "runs raptor_qcond with a dev-calibrated setting (scripts/sweep_qcond.py).",
+)
 def main(configs, questions, llm, include_raptor, corpus_dir, eval_set_path,
-         results_suffix, faithfulness, qasper_f1):
+         results_suffix, faithfulness, qasper_f1, qcond_config_json):
     """Run the full RAG benchmark."""
+    qcond_config = None
+    if qcond_config_json:
+        import json
+        from src.raptor.tree_retriever import QCondConfig
+        qcond_config = QCondConfig(**json.loads(qcond_config_json))
+        print(f"Using qcond overrides: {qcond_config}")
     # Parse config filter
     if configs == "all":
         config_list = generate_all_configs(include_raptor=include_raptor)
@@ -92,6 +103,7 @@ def main(configs, questions, llm, include_raptor, corpus_dir, eval_set_path,
         enable_faithfulness=faithfulness,
         enable_qasper_f1=qasper_f1,
         results_suffix=results_suffix,
+        qcond_config=qcond_config,
     )
     runner = BenchmarkRunner(**runner_kwargs)
 

@@ -29,6 +29,24 @@ class GenerationResult:
 
 _tokenizer = tiktoken.get_encoding("cl100k_base")
 
+# Transient-failure retries around each chat call, on top of the SDKs' own
+# internal retries. Long unattended runs (a tree build or benchmark makes
+# thousands of sequential calls over hours) must survive network outages
+# that outlast the SDK's ~2 quick retries: back off 10/20/40/80/160s
+# (~5 minutes of tolerance) before giving up.
+_RETRY_ATTEMPTS = 6
+_RETRY_BASE_SLEEP_S = 10.0
+
+
+def _chat_with_retries(call, transient_errors: tuple):
+    for attempt in range(_RETRY_ATTEMPTS):
+        try:
+            return call()
+        except transient_errors:
+            if attempt == _RETRY_ATTEMPTS - 1:
+                raise
+            time.sleep(_RETRY_BASE_SLEEP_S * 2 ** attempt)
+
 
 class _OpenAICompatChat:
     """Uniform chat() interface wrapping an OpenAI-compatible client
@@ -39,14 +57,23 @@ class _OpenAICompatChat:
         self._client = client
 
     def chat(self, system: str, user: str, max_tokens: int, temperature: float = 0.0) -> str:
-        response = self._client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            max_tokens=max_tokens,
-            temperature=temperature,
+        import openai
+
+        def call():
+            return self._client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+
+        response = _chat_with_retries(
+            call,
+            (openai.APIConnectionError, openai.RateLimitError,
+             openai.InternalServerError),
         )
         return response.choices[0].message.content or ""
 
@@ -57,8 +84,9 @@ class _AnthropicChat:
     Per Anthropic API guidance: a plain `messages.create()` call with no
     temperature/top_p/thinking params (`temperature` is accepted here only
     to match `_OpenAICompatChat`'s signature — it is intentionally never
-    forwarded), and the SDK's own default retry behavior (max_retries=2)
-    handles 429/5xx, so there's no custom retry logic.
+    forwarded). The SDK's default retries (max_retries=2) handle quick
+    429/5xx blips; `_chat_with_retries` adds backoff for outages that
+    outlast them.
     """
 
     def __init__(self, model: str, client):
@@ -66,11 +94,20 @@ class _AnthropicChat:
         self._client = client
 
     def chat(self, system: str, user: str, max_tokens: int, temperature: float = 0.0) -> str:
-        response = self._client.messages.create(
-            model=self.model,
-            max_tokens=max_tokens,
-            system=system,
-            messages=[{"role": "user", "content": user}],
+        import anthropic
+
+        def call():
+            return self._client.messages.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            )
+
+        response = _chat_with_retries(
+            call,
+            (anthropic.APIConnectionError, anthropic.RateLimitError,
+             anthropic.InternalServerError),
         )
         return "".join(block.text for block in response.content if block.type == "text")
 

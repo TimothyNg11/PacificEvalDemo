@@ -7,3 +7,7 @@ data/raptor_cache/
 data/corpus_qasper/
 data/eval_set_qasper.yaml
 .env
+data/corpus_qasper250/
+data/eval_set_qasper250.yaml
+data/eval_set_qasper250_dev.yaml
+data/eval_set_qasper250_test.yaml

@@ -72,11 +72,15 @@ class BenchmarkRunner:
         enable_faithfulness: bool = False,
         enable_qasper_f1: bool = False,
         results_suffix: str = "",
+        qcond_config=None,
     ):
         self.include_raptor = include_raptor
         self.enable_faithfulness = enable_faithfulness
         self.enable_qasper_f1 = enable_qasper_f1
         self.results_suffix = results_suffix
+        # Optional dev-calibrated QCondConfig for qcond configs (see
+        # scripts/sweep_qcond.py); None = QCondConfig defaults.
+        self.qcond_config = qcond_config
 
         # Load eval set
         with open(eval_set_path, "r", encoding="utf-8") as f:
@@ -130,7 +134,9 @@ class BenchmarkRunner:
 
             # Get the index for this chunking strategy
             index = self.indexes[config.chunking.value]
-            retriever = make_retriever(index, reranker=self.reranker)
+            retriever = make_retriever(
+                index, reranker=self.reranker, qcond_config=self.qcond_config
+            )
 
             for q_idx, question in enumerate(self.eval_set, 1):
                 # Retrieve
